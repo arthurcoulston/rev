@@ -84,7 +84,7 @@ function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string): SessionResul
         '--dangerously-skip-permissions',
         '--output-format', 'json',
       ],
-      { cwd: l.cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, env: cleanEnv() },
+      { cwd: l.cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, env: cleanEnv(), stdio: ['ignore', 'pipe', 'pipe'] },
     );
     if (res.error) return { rc: 78, cls: 'apparatus', outputTail: `claude CLI not runnable: ${res.error.message}` };
     const stdout = res.stdout ?? '';
