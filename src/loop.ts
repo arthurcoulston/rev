@@ -1,0 +1,165 @@
+// The single-loop driver: wake on the Helm cursor, spawn one session, classify
+// the outcome through the ladder, idle or halt. v0 runs one loop in the
+// foreground; the multi-loop supervisor is the next milestone.
+import { stateDir } from './config.js';
+import { actorActivity, escalateBlocked, wakeCheck } from './helm.js';
+import { ladderDecide, rollingMean, velocityToPause } from './ladder.js';
+import { logEvent, pidAlive, sClear, sGet, sHas, sSet, streak, streakReset } from './sentinels.js';
+import { runSession } from './shim.js';
+import { GlobalConfig, LoopConfig } from './types.js';
+
+const sleep = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
+
+export interface RunOptions {
+  count?: number; // bounded run for troubleshooting; 0/undefined = unbounded to the ceiling
+}
+
+export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions = {}): Promise<void> {
+  const dir = stateDir(l.name);
+
+  const existing = pidAlive(l.name);
+  if (existing) {
+    throw new Error(`A '${l.name}' loop is already running (PID ${existing}). Check: capstan status`);
+  }
+  sSet(l.name, 'RUNNING', `${process.pid}\nstarted ${new Date().toISOString()}\n`);
+  if (!sHas(l.name, 'PACE') && l.pace < 1) sSet(l.name, 'PACE', String(l.pace));
+  const cleanup = () => sClear(l.name, 'RUNNING', 'PARKED', 'LIMIT');
+  process.on('exit', cleanup);
+  process.on('SIGINT', () => process.exit(130));
+  process.on('SIGTERM', () => process.exit(143));
+
+  console.log(`capstan: loop '${l.name}' | workstream ${l.workstream} | ${l.runtime}/${l.model} | cwd ${l.cwd}`);
+  console.log(`capstan: state ${dir} — stop it with: capstan stop ${l.name}`);
+  logEvent(l.name, 'loop-start', `pid=${process.pid} count=${opts.count ?? 0}`);
+
+  let i = 0;
+  let durWindow: number[] = [];
+  let tAvg = 0;
+
+  while (true) {
+    // Halt sentinels, checked at the top so an operator signal between
+    // iterations always wins.
+    for (const s of ['STOP', 'HOLD', 'BLOCKED'] as const) {
+      if (sHas(l.name, s)) {
+        logEvent(l.name, 'loop-stop', `reason=${s} runs=${i}`);
+        console.log(`capstan: ${s} present — halting '${l.name}' after ${i} run(s).`);
+        return;
+      }
+    }
+
+    // Live park (command != state: PARKED is the ack a coordinator waits for).
+    if (sGet(l.name, 'PACE')?.trim() === 'park') {
+      if (!sHas(l.name, 'PARKED')) {
+        sSet(l.name, 'PARKED', new Date().toISOString());
+        logEvent(l.name, 'park');
+        console.log(`capstan: parked '${l.name}' (PACE=park); clear PACE to resume.`);
+      }
+      await sleep(g.poll_seconds);
+      continue;
+    } else if (sHas(l.name, 'PARKED')) {
+      sClear(l.name, 'PARKED');
+      logEvent(l.name, 'resume');
+    }
+
+    // Idle: poll the Helm cursor; zero tokens until there is real work.
+    const idle = sGet(l.name, 'IDLE');
+    if (idle !== null) {
+      const since = parseInt(idle, 10) || 0;
+      const w = wakeCheck(g, l, since);
+      if (w.ready_count > 0 || w.changed_since) {
+        sClear(l.name, 'IDLE');
+        logEvent(l.name, 'wake', `since=${since} ready=${w.ready_count}`);
+      } else {
+        await sleep(g.poll_seconds);
+        continue;
+      }
+    }
+
+    i += 1;
+    const before = wakeCheck(g, l, 0);
+    const started = Date.now();
+    logEvent(l.name, 'run-start', `iter=${i} seq=${before.max_seq}`);
+    console.log(`=== ${l.name} run ${i} started ${new Date().toISOString()} ===`);
+
+    const prompt =
+      `Loop iteration ${i} for agent '${l.name}'. Working directory: ${l.cwd}. ` +
+      `Use your Helm tools: first list tickets assigned to you, then ready work in workstream '${l.workstream}'. ` +
+      `Work ONE ticket to a natural stopping point, record progress honestly, then end the session. ${l.prompt ?? ''}`;
+    const res = runSession(g, l, prompt);
+
+    const durSec = Math.round((Date.now() - started) / 1000);
+    ({ window: durWindow, mean: tAvg } = rollingMean(durWindow, durSec));
+    console.log(res.outputTail.slice(-2000));
+    console.log(`=== ${l.name} run ${i} ended (rc=${res.rc} class=${res.cls} ${durSec}s) ===`);
+
+    const produced = res.cls === 'ok' ? actorActivity(g, l.name, before.max_seq) > 0 : false;
+    const failStreak = res.cls === 'failure' ? streak(l.name, 'fail', true) : 0;
+    const limitStreak = res.cls === 'transient' ? streak(l.name, 'limit', true) : 0;
+    const action = ladderDecide(res.cls, {
+      produced,
+      failStreak,
+      limitStreak,
+      failCap: g.fail_cap,
+      limitCap: g.limit_cap,
+      limitWait: g.limit_wait_seconds,
+    });
+    logEvent(l.name, 'run-end', `iter=${i} rc=${res.rc} class=${res.cls} produced=${produced} dur=${durSec}s action=${action.act}`);
+
+    switch (action.act) {
+      case 'blocked': {
+        sSet(l.name, 'BLOCKED', `${action.reason}\nat=${new Date().toISOString()}\n`);
+        logEvent(l.name, 'blocked', `reason=${action.reason}`);
+        try {
+          const id = escalateBlocked(g, l, action.reason, res.outputTail, dir);
+          console.log(`capstan: '${l.name}' BLOCKED — escalated as Helm ticket ${id}.`);
+          logEvent(l.name, 'escalated', `ticket=${id}`);
+        } catch (e) {
+          console.error(`capstan: '${l.name}' BLOCKED — AND the escalation to Helm failed (${String(e).slice(0, 200)}). The operator must find this in the dashboard/status.`);
+          logEvent(l.name, 'escalate-failed', String(e).slice(0, 200));
+        }
+        return;
+      }
+      case 'limit_wait': {
+        sSet(l.name, 'LIMIT', `attempt=${action.attempt}\nretry_s=${action.waitSeconds}\n`);
+        console.log(`capstan: transient condition — parking '${l.name}' ${action.waitSeconds}s (attempt ${action.attempt}/${g.limit_cap}).`);
+        let waited = 0;
+        while (waited < action.waitSeconds && !sHas(l.name, 'STOP') && !sHas(l.name, 'BLOCKED')) {
+          await sleep(Math.min(60, action.waitSeconds - waited));
+          waited += 60;
+        }
+        sClear(l.name, 'LIMIT');
+        continue;
+      }
+      case 'idle': {
+        streakReset(l.name, 'fail', 'limit');
+        const after = wakeCheck(g, l, 0);
+        sSet(l.name, 'IDLE', String(after.max_seq));
+        console.log(`capstan: no production this iteration — IDLE at seq ${after.max_seq}.`);
+        break;
+      }
+      case 'continue':
+        if (res.cls === 'ok') streakReset(l.name, 'fail', 'limit');
+        break;
+    }
+
+    if (opts.count && i >= opts.count) {
+      console.log(`capstan: requested run count (${opts.count}) reached — halting '${l.name}'.`);
+      logEvent(l.name, 'loop-stop', `reason=count runs=${i}`);
+      return;
+    }
+    if (i >= g.iteration_ceiling) {
+      console.log(`capstan: iteration ceiling (${g.iteration_ceiling}) reached — halting '${l.name}'.`);
+      logEvent(l.name, 'loop-stop', `reason=ceiling runs=${i}`);
+      return;
+    }
+
+    // Inter-iteration velocity throttle, honoring live sentinel changes.
+    const pace = parseFloat(sGet(l.name, 'PACE') ?? '') || 1;
+    let throttle = velocityToPause(pace, tAvg);
+    while (throttle > 0 && !sHas(l.name, 'STOP') && !sHas(l.name, 'BLOCKED') && sGet(l.name, 'PACE')?.trim() !== 'park') {
+      const step = Math.min(g.poll_seconds, throttle);
+      await sleep(step);
+      throttle -= step;
+    }
+  }
+}

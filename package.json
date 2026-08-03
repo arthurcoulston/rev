@@ -1,0 +1,27 @@
+{
+  "name": "capstan",
+  "version": "0.1.0",
+  "description": "Capstan keeps agent loops turning: process supervision for autonomous agent loops driven by a Helm work record.",
+  "main": "index.js",
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc",
+    "view": "tsx src/view.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "capstan": "dist/cli.js"
+  },
+  "dependencies": {
+    "smol-toml": "^1.7.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "tsx": "^4.23.5",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

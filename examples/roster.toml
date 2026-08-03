@@ -1,0 +1,33 @@
+# Capstan roster — copy to ~/.capstan/roster.toml and edit.
+# Loops are instance data: they live here, never in the Capstan repo.
+
+[global]
+# Paths to your Helm checkout's built CLI and MCP server (required).
+helm_cli = "/path/to/helm/dist/cli.js"
+helm_mcp_server = "/path/to/helm/dist/server.js"
+# helm_db = "/custom/path/helm.db"   # optional; default ~/.helm/helm.db
+# poll_seconds = 60                  # idle wake-poll interval
+# iteration_ceiling = 2000           # safety stop for unbounded runs
+# fail_cap = 2                       # consecutive failures before BLOCKED
+# limit_wait_seconds = 900           # park time on transient API/network conditions
+# limit_cap = 20                     # consecutive parks before BLOCKED (~5h default)
+# escalation_workstream = "capstan"  # where loop-blocked tickets are filed
+
+# A worker loop. The name is also its Helm actor identity.
+[loops.example-worker]
+workstream = "my-workstream"          # which Helm workstream it draws from
+cwd = "~/projects/my-project"         # sessions run here; any folder on the machine
+runtime = "claude"                    # claude | codex | mock
+model = "claude-sonnet-5"
+constitution = "constitutions/example-worker.md"  # relative to ~/.capstan
+version = "0.1"                       # bump when the constitution changes — it's provenance
+pace = 1.0                            # velocity fraction; 0.5 = half speed
+# prompt = "Extra per-iteration instructions appended to the standard prompt."
+# mcp_extra = "mcp/example-worker.json"  # additional MCP servers for this loop's sessions
+
+# A mock loop — for testing Capstan itself and verifying installs; no tokens.
+# [loops.smoke]
+# workstream = "capstan-test"
+# cwd = "/tmp"
+# runtime = "mock"
+# mock_cmd = "echo 'iteration ran'; exit 0"
