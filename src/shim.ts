@@ -153,5 +153,12 @@ function runMock(l: LoopConfig, prompt: string): SessionResult {
   });
   const rc = res.status ?? 1;
   const cls = rc === 0 ? 'ok' : rc === 75 ? 'transient' : rc === 78 ? 'apparatus' : 'failure';
-  return { rc, cls, outputTail: `${res.stdout ?? ''}${res.stderr ?? ''}`.slice(-4000) };
+  // Mock sessions can report usage the way real runtimes do, so the metering
+  // and spend write-back paths are testable without an agent CLI:
+  //   echo "capstan-mock-usage tokens=1200 cost_usd=0.25"
+  const usage = /capstan-mock-usage tokens=(\d+)(?: cost_usd=([\d.]+))?/.exec(res.stdout ?? '');
+  const tokens = usage ? Number(usage[1]) : undefined;
+  const cost = usage?.[2] ? Number(usage[2]) : undefined;
+  if (usage) logTokens(l, tokens, cost);
+  return { rc, cls, tokens, cost_usd: cost, outputTail: `${res.stdout ?? ''}${res.stderr ?? ''}`.slice(-4000) };
 }

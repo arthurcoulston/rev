@@ -36,6 +36,19 @@ export function actorActivity(g: GlobalConfig, name: string, sinceSeq: number): 
   return (run(g, ['actor-activity', '--name', name, '--since-seq', String(sinceSeq)]) as { events: number }).events;
 }
 
+export function actorTickets(g: GlobalConfig, name: string, sinceSeq: number): { id: string; events: number }[] {
+  return (run(g, ['actor-tickets', '--name', name, '--since-seq', String(sinceSeq)]) as { tickets: { id: string; events: number }[] }).tickets;
+}
+
+// Spend is written by Capstan (the meter), not the loop's agent — the agent
+// never saw its own usage, and the provenance should say who measured.
+export function recordSpend(g: GlobalConfig, ticketId: string, tokens: number | undefined, cost: number | undefined, note: string): void {
+  const args = ['record-spend', '--ticket', ticketId, '--note', note];
+  if (tokens) args.push('--tokens', String(tokens));
+  if (cost) args.push('--cost-usd', String(cost));
+  run(g, args, capstanActor());
+}
+
 // A BLOCKED loop is a summons, not a log line: file it straight into the
 // awaiting-human queue so the operator's existing dashboard and meeting see it.
 export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, outputTail: string, stateDir: string): string {

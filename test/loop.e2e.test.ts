@@ -62,6 +62,7 @@ ID=$(node ${HELM_CLI} list --ready --workstream capstan-test --limit 1 | node -e
 if [ -n "$ID" ]; then
   node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
   node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
+  echo "capstan-mock-usage tokens=1200 cost_usd=0.25"
 fi
 '''
 `);
@@ -69,15 +70,22 @@ fi
     const out = capstan(e, ['run', 'test-loop', '--count', '2']);
     expect(out).toContain('run 1 started');
 
-    const ticket = helm(e, ['get', id]) as { status: string; evidence: unknown[] };
+    const ticket = helm(e, ['get', id]) as { status: string; evidence: unknown[]; tokens_total: number; cost_usd_total: number };
     expect(ticket.status).toBe('done');
     expect(ticket.evidence.length).toBe(1);
+
+    // H-19: the session's metered spend landed on the ticket it worked —
+    // written by the capstan actor AFTER the mock closed it.
+    expect(ticket.tokens_total).toBe(1200);
+    expect(ticket.cost_usd_total).toBeCloseTo(0.25);
+    expect(readFileSync(join(e.home, 'token-log'), 'utf8')).toContain('tokens=1200 cost_usd=0.25');
 
     // Second iteration produced nothing -> loop idles at the cursor.
     const idle = join(e.home, 'state', 'test-loop', 'IDLE');
     expect(existsSync(idle)).toBe(true);
     const events = readFileSync(join(e.home, 'state', 'test-loop', 'events.log'), 'utf8');
     expect(events).toMatch(/run-end.*produced=true/);
+    expect(events).toMatch(new RegExp(`spend\\s+iter=1 ticket=${id} tokens=1200 cost=0\\.25`));
     expect(events).toMatch(/action=idle/);
   });
 

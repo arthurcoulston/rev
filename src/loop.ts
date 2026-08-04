@@ -2,7 +2,7 @@
 // the outcome through the ladder, idle or halt. v0 runs one loop in the
 // foreground; the multi-loop supervisor is the next milestone.
 import { stateDir } from './config.js';
-import { actorActivity, escalateBlocked, wakeCheck } from './helm.js';
+import { actorActivity, actorTickets, escalateBlocked, recordSpend, wakeCheck } from './helm.js';
 import { ladderDecide, rollingMean, velocityToPause } from './ladder.js';
 import { logEvent, pidAlive, sClear, sGet, sHas, sSet, streak, streakReset } from './sentinels.js';
 import { runSession } from './shim.js';
@@ -104,6 +104,26 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       limitWait: g.limit_wait_seconds,
     });
     logEvent(l.name, 'run-end', `iter=${i} rc=${res.rc} class=${res.cls} produced=${produced} dur=${durSec}s action=${action.act}`);
+
+    // Write metered spend back to the ticket(s) this iteration touched (H-19).
+    // Whole session charged to the most-touched ticket — finer attribution
+    // would be pretend precision; the note names any others. Runs after close
+    // (record-spend accepts terminal tickets) and must never affect the run.
+    if (res.tokens || res.cost_usd) {
+      try {
+        const touched = actorTickets(g, l.name, before.max_seq);
+        if (touched.length) {
+          const [primary, ...rest] = touched;
+          const note =
+            `Metered by Capstan: loop '${l.name}' iteration ${i} (${l.runtime}/${l.model}), whole session charged to this ticket` +
+            (rest.length ? `; session also touched ${rest.map((t) => t.id).join(', ')}` : '') + '.';
+          recordSpend(g, primary!.id, res.tokens, res.cost_usd, note);
+          logEvent(l.name, 'spend', `iter=${i} ticket=${primary!.id} tokens=${res.tokens ?? '?'} cost=${res.cost_usd ?? '?'}`);
+        }
+      } catch (e) {
+        logEvent(l.name, 'spend-failed', `iter=${i} ${String(e).slice(0, 200)}`);
+      }
+    }
 
     switch (action.act) {
       case 'blocked': {
