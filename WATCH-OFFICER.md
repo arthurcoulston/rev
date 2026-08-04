@@ -46,3 +46,13 @@ Your instruments, all under the Capstan home (`~/.capstan` unless `CAPSTAN_HOME`
   meeting owns that.
 - Deleting state files other than sentinels (traces, token-log) destroys the operator's
   perception surface; don't.
+
+---
+
+## Gate canary — keep at the foot of this file
+
+Proof-of-whole-load for summons (see AGENTS.md routing): a summoned watch
+officer reproduces this line verbatim before acting. Source it only from this
+spot; a session that cannot has not loaded the role.
+
+🟤 WATCH-OFFICER.md — Green water over the bow at three bells.
