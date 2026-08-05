@@ -4,10 +4,10 @@ import { join, isAbsolute } from 'node:path';
 import { parse } from 'smol-toml';
 import { GlobalConfig, LoopConfig } from './types.js';
 
-// All instance data lives under the Capstan home (never in the repo):
+// All instance data lives under the Rev home (never in the repo):
 //   roster.toml, constitutions/, state/<loop>/, token-log
-export function capstanHome(): string {
-  return process.env['CAPSTAN_HOME'] ?? join(homedir(), '.capstan');
+export function revHome(): string {
+  return process.env['REV_HOME'] ?? join(homedir(), '.rev');
 }
 
 const GLOBAL_DEFAULTS = {
@@ -16,7 +16,7 @@ const GLOBAL_DEFAULTS = {
   fail_cap: 2,
   limit_wait_seconds: 900,
   limit_cap: 20,
-  escalation_workstream: 'capstan',
+  escalation_workstream: 'rev',
 };
 
 export interface Roster {
@@ -25,16 +25,16 @@ export interface Roster {
 }
 
 export function loadRoster(): Roster {
-  const path = join(capstanHome(), 'roster.toml');
+  const path = join(revHome(), 'roster.toml');
   if (!existsSync(path)) {
     throw new Error(
-      `No roster at ${path}. Create it from the repo's examples/roster.toml — loops are instance data and live in ${capstanHome()}, never in the repo.`,
+      `No roster at ${path}. Create it from the repo's examples/roster.toml — loops are instance data and live in ${revHome()}, never in the repo.`,
     );
   }
   const raw = parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
   const g = (raw['global'] ?? {}) as Record<string, unknown>;
-  for (const key of ['helm_cli', 'helm_mcp_server']) {
-    if (!g[key]) throw new Error(`roster.toml [global] is missing '${key}' — the path to Helm's ${key === 'helm_cli' ? 'dist/cli.js' : 'dist/server.js'}.`);
+  for (const key of ['helmo_cli', 'helmo_mcp_server']) {
+    if (!g[key]) throw new Error(`roster.toml [global] is missing '${key}' — the path to Helm's ${key === 'helmo_cli' ? 'dist/cli.js' : 'dist/server.js'}.`);
   }
   const global = { ...GLOBAL_DEFAULTS, ...g } as unknown as GlobalConfig;
 
@@ -64,13 +64,13 @@ export function loadRoster(): Roster {
 }
 
 export function stateDir(loop: string): string {
-  const d = join(capstanHome(), 'state', loop);
+  const d = join(revHome(), 'state', loop);
   mkdirSync(d, { recursive: true });
   return d;
 }
 
 export function tokenLogPath(): string {
-  return join(capstanHome(), 'token-log');
+  return join(revHome(), 'token-log');
 }
 
 function expand(p: string): string {
@@ -79,5 +79,5 @@ function expand(p: string): string {
 
 function resolveHome(p: string): string {
   const e = expand(p);
-  return isAbsolute(e) ? e : join(capstanHome(), e);
+  return isAbsolute(e) ? e : join(revHome(), e);
 }

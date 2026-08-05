@@ -7,10 +7,10 @@ import { Sentinel } from './types.js';
 // inherited from a battle-tested prototype. Each file has a defined owner:
 //   STOP     operator: clean halt between iterations
 //   HOLD     agent/operator: intended hold — not an anomaly, survives restart
-//   BLOCKED  capstan→human: cap exceeded / unrecoverable; escalated as a Helm ticket
-//   LIMIT    capstan: parked on a transient external condition, retrying
-//   IDLE     capstan: waiting on the wake cursor (contents = Helm event seq)
-//   RUNNING  capstan: pid + start stamp of the live loop process
+//   BLOCKED  rev→human: cap exceeded / unrecoverable; escalated as a Helm ticket
+//   LIMIT    rev: parked on a transient external condition, retrying
+//   IDLE     rev: waiting on the wake cursor (contents = Helm event seq)
+//   RUNNING  rev: pid + start stamp of the live loop process
 //   PACE     operator/agent: velocity command ("park" or fraction (0,1])
 //   PARKED   loop: acknowledgment that it has actually parked (command != state)
 

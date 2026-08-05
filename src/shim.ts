@@ -1,4 +1,4 @@
-// Runtime shim — the single point where Capstan binds to concrete agent CLIs.
+// Runtime shim — the single point where Rev binds to concrete agent CLIs.
 // Contract: run one non-interactive session in the loop's cwd; return the exit
 // code classified per the ladder (0 clean / 75 transient / 78 apparatus),
 // token accounting when the runtime reports it, and the output tail.
@@ -47,9 +47,9 @@ export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: stri
 // ambient user-scope servers out of headless sessions.
 function writeMcpConfig(g: GlobalConfig, l: LoopConfig, dir: string): string {
   const helmEnv: Record<string, string> = { HELMO_ACTOR: JSON.stringify(loopActor(l)) };
-  if (g.helm_db) helmEnv['HELMO_DB'] = g.helm_db;
+  if (g.helmo_db) helmEnv['HELMO_DB'] = g.helmo_db;
   const servers: Record<string, unknown> = {
-    helmo: { command: 'node', args: [g.helm_mcp_server], env: helmEnv },
+    helmo: { command: 'node', args: [g.helmo_mcp_server], env: helmEnv },
   };
   if (l.mcp_extra && existsSync(l.mcp_extra)) {
     Object.assign(servers, (JSON.parse(readFileSync(l.mcp_extra, 'utf8')) as { mcpServers?: Record<string, unknown> }).mcpServers ?? {});
@@ -71,7 +71,7 @@ function logTokens(l: LoopConfig, tokens?: number, cost?: number): void {
 }
 
 function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string): SessionResult {
-  const scratch = mkdtempSync(join(tmpdir(), 'capstan-'));
+  const scratch = mkdtempSync(join(tmpdir(), 'rev-'));
   try {
     const mcpConfig = writeMcpConfig(g, l, scratch);
     const res = spawnSync(
@@ -123,7 +123,7 @@ function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string): SessionResul
 
 function runCodex(_g: GlobalConfig, l: LoopConfig, prompt: string): SessionResult {
   // Ported shape from the prototype: ephemeral, no user config, last-message capture.
-  const lastMsg = join(mkdtempSync(join(tmpdir(), 'capstan-')), 'last.md');
+  const lastMsg = join(mkdtempSync(join(tmpdir(), 'rev-')), 'last.md');
   const res = spawnSync(
     'codex',
     [
@@ -149,14 +149,14 @@ function runMock(l: LoopConfig, prompt: string): SessionResult {
   const res = spawnSync('bash', ['-c', l.mock_cmd], {
     cwd: l.cwd,
     encoding: 'utf8',
-    env: { ...cleanEnv(), CAPSTAN_LOOP: l.name, CAPSTAN_PROMPT: prompt, HELMO_ACTOR: JSON.stringify(loopActor(l)) },
+    env: { ...cleanEnv(), REV_LOOP: l.name, REV_PROMPT: prompt, HELMO_ACTOR: JSON.stringify(loopActor(l)) },
   });
   const rc = res.status ?? 1;
   const cls = rc === 0 ? 'ok' : rc === 75 ? 'transient' : rc === 78 ? 'apparatus' : 'failure';
   // Mock sessions can report usage the way real runtimes do, so the metering
   // and spend write-back paths are testable without an agent CLI:
-  //   echo "capstan-mock-usage tokens=1200 cost_usd=0.25"
-  const usage = /capstan-mock-usage tokens=(\d+)(?: cost_usd=([\d.]+))?/.exec(res.stdout ?? '');
+  //   echo "rev-mock-usage tokens=1200 cost_usd=0.25"
+  const usage = /rev-mock-usage tokens=(\d+)(?: cost_usd=([\d.]+))?/.exec(res.stdout ?? '');
   const tokens = usage ? Number(usage[1]) : undefined;
   const cost = usage?.[2] ? Number(usage[2]) : undefined;
   if (usage) logTokens(l, tokens, cost);

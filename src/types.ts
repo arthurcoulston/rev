@@ -1,13 +1,13 @@
 export interface GlobalConfig {
-  helm_cli: string;        // path to helm's dist/cli.js
-  helm_mcp_server: string; // path to helm's dist/server.js (injected into agent sessions)
-  helm_db?: string;        // optional HELMO_DB override
+  helmo_cli: string;        // path to helm's dist/cli.js
+  helmo_mcp_server: string; // path to helm's dist/server.js (injected into agent sessions)
+  helmo_db?: string;        // optional HELMO_DB override
   poll_seconds: number;    // idle wake-poll interval
   iteration_ceiling: number;
   fail_cap: number;        // consecutive runtime failures before BLOCKED
   limit_wait_seconds: number;   // park time on transient API/network conditions
   limit_cap: number;            // consecutive limit-waits before BLOCKED
-  escalation_workstream: string; // where Capstan files loop-blocked tickets
+  escalation_workstream: string; // where Rev files loop-blocked tickets
 }
 
 export interface LoopConfig {
@@ -16,7 +16,7 @@ export interface LoopConfig {
   cwd: string;
   runtime: 'claude' | 'codex' | 'mock';
   model: string;
-  constitution: string;    // path, relative to capstan home or absolute
+  constitution: string;    // path, relative to rev home or absolute
   version: string;         // loop version — part of the actor identity
   pace: number;            // velocity fraction (0,1]
   prompt?: string;         // iteration prompt tail

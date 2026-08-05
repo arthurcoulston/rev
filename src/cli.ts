@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// capstan — run and control loops. Control verbs are sentinel writes; anything
+// rev — run and control loops. Control verbs are sentinel writes; anything
 // that reads state is safe from any context (the watch officer uses these).
 import { loadRoster, stateDir } from './config.js';
 import { runLoop } from './loop.js';
@@ -10,7 +10,7 @@ const [cmd, ...rest] = process.argv.slice(2);
 function loopArg(): string {
   const name = rest[0];
   if (!name) {
-    console.error(`usage: capstan ${cmd} <loop>`);
+    console.error(`usage: rev ${cmd} <loop>`);
     process.exit(1);
   }
   return name;
@@ -64,21 +64,21 @@ switch (cmd) {
     const name = loopArg();
     sSet(name, 'STOP');
     logEvent(name, 'operator', 'STOP set');
-    console.log(`STOP set for '${name}' — halts cleanly after any in-flight iteration. Resume: capstan resume ${name} (then capstan run ${name}).`);
+    console.log(`STOP set for '${name}' — halts cleanly after any in-flight iteration. Resume: rev resume ${name} (then rev run ${name}).`);
     break;
   }
   case 'resume': {
     const name = loopArg();
     sClear(name, 'STOP', 'HOLD', 'BLOCKED');
     logEvent(name, 'operator', 'STOP/HOLD/BLOCKED cleared');
-    console.log(`Halt sentinels cleared for '${name}'. Start it with: capstan run ${name}`);
+    console.log(`Halt sentinels cleared for '${name}'. Start it with: rev run ${name}`);
     break;
   }
   case 'pace': {
     const name = loopArg();
     const v = rest[1];
     if (!v) {
-      console.error('usage: capstan pace <loop> <fraction (0,1] | park | clear>');
+      console.error('usage: rev pace <loop> <fraction (0,1] | park | clear>');
       process.exit(1);
     }
     if (v === 'clear') sClear(name, 'PACE');
@@ -93,13 +93,13 @@ switch (cmd) {
     break;
   }
   default:
-    console.error(`usage: capstan <command>
+    console.error(`usage: rev <command>
   run <loop> [--count N]   drive one loop in the foreground (v0; the supervisor is v1)
   status                   every loop's state at a glance
   stop <loop>              set STOP — clean halt after the in-flight iteration
   resume <loop>            clear STOP/HOLD/BLOCKED so the loop can be run again
   pace <loop> <v>          velocity: fraction (0,1], 'park', or 'clear'
   tail <loop>              print the path of the loop's event trace
-Roster: ${Object.keys(loops).join(', ') || '(none)'} — from ~/.capstan/roster.toml (CAPSTAN_HOME to override).`);
+Roster: ${Object.keys(loops).join(', ') || '(none)'} — from ~/.rev/roster.toml (REV_HOME to override).`);
     process.exit(cmd ? 1 : 0);
 }

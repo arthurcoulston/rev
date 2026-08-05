@@ -1,15 +1,15 @@
-# Capstan — Product Description
+# Rev — Product Description
 
-Open source, self-hosted, runtime-neutral. **Capstan keeps agent loops turning.**
+Open source, self-hosted, runtime-neutral. **Rev keeps agent loops turning.**
 
-Capstan is process supervision for autonomous AI agent loops that draw their work from a
+Rev is process supervision for autonomous AI agent loops that draw their work from a
 [Helm](https://github.com/TBD/helm) work record. Helm is where the human steers — the record of
-what needs doing, what happened, and what awaits a decision. Capstan is the engine room: it decides
+what needs doing, what happened, and what awaits a decision. Rev is the engine room: it decides
 *when agents run*, keeps them alive, classifies their failures, meters their spend, and escalates to
-the record when the machine needs a human. Capstan never reads ticket content; Helm never manages a
+the record when the machine needs a human. Rev never reads ticket content; Helm never manages a
 process. The two meet only at Helm's public interface.
 
-A capstan is the shipboard winch that does heavy work through continuous rotation. That is the whole
+A rev is the shipboard winch that does heavy work through continuous rotation. That is the whole
 product: dumb, reliable rotation — made trustworthy.
 
 ## Premise
@@ -19,12 +19,12 @@ The simplest agent loop — `while true; do agent -p "$(cat prompt.md)"; done` �
 fails in production in known, recurring ways: it spins against a dead API, wedges silently on a
 credential prompt, crashes and stays down, burns budget on empty iterations, duplicates work, and
 tells no one. A battle-tested private prototype (~1,600 lines of supervision grown over months of
-incidents) established what the loop actually needs; Capstan is that experience rebuilt as a
+incidents) established what the loop actually needs; Rev is that experience rebuilt as a
 generic, publishable tool with a work record — rather than git — as its coordination bus.
 
 Design stance, inherited from the prototype and from published harness practice:
 
-- **The harness owns process; the agent owns judgment.** Capstan provisions, schedules, supervises,
+- **The harness owns process; the agent owns judgment.** Rev provisions, schedules, supervises,
   and accounts. Which ticket to take, how to do the work, when to ask a human — that lives in the
   agent and its constitution, and in the work record's own rules.
 - **Event-driven, never cron.** Loops idle until the work record changes under their scope. An
@@ -35,7 +35,7 @@ Design stance, inherited from the prototype and from published harness practice:
 - **Agents are drained, not killed.** Graceful stop lets in-flight iterations finish their close-out.
   The hard kill exists and is reserved for emergencies.
 
-## The loop — Capstan's unit
+## The loop — Rev's unit
 
 A **loop** is one supervised worker: an identity that repeatedly wakes, runs a fresh agent session
 against ready work, and exits. Its full definition is instance data (the **roster**), not code:
@@ -58,14 +58,14 @@ session.
 
 ## Instance data lives outside the repo
 
-The Capstan repo contains generic code and example configs only. Everything operator-specific — the
+The Rev repo contains generic code and example configs only. Everything operator-specific — the
 roster, constitutions, MCP allowlists, runtime state (sentinels, logs, meters) — lives in
-`~/.capstan/` (configurable). Publishability is structural: there is no personal context to scrub
+`~/.rev/` (configurable). Publishability is structural: there is no personal context to scrub
 because none can enter the repo. The prototype kept its instance layer in-repo behind discipline;
-Capstan moves the boundary into the filesystem.
+Rev moves the boundary into the filesystem.
 
 ```
-~/.capstan/
+~/.rev/
   roster.toml            # the loops, as data — add a loop, no code change
   constitutions/         # per-loop instruction files
   state/<loop>/          # sentinels, events.log, console.log — machine-local, gitignored by nature
@@ -74,10 +74,10 @@ Capstan moves the boundary into the filesystem.
 
 ## The wake model
 
-Helm's append-only event log has a global sequence number; that cursor is Capstan's coordination
+Helm's append-only event log has a global sequence number; that cursor is Rev's coordination
 bus. An idle loop remembers the seq at which it went idle and polls a cheap read-only query:
 *any new ready ticket in my scope, or new event on work I hold, since seq N?* No tokens, no agent,
-no git. On wake, Capstan spawns one session; the agent selects work through Helm's own tools.
+no git. On wake, Rev spawns one session; the agent selects work through Helm's own tools.
 
 This replaces the prototype's git-as-bus machinery (wake paths over origin/main, mandatory
 worktrees, push races, stranded-commit checks) for every loop that isn't producing commits — and
@@ -90,13 +90,13 @@ state is a sentinel with a defined owner and escalation path:
 
 | State | Owner | Meaning |
 |---|---|---|
-| `RUNNING` | capstan | Iteration in flight (PID + start time). |
-| `IDLE` | capstan | Alive, waiting on the wake cursor. |
+| `RUNNING` | rev | Iteration in flight (PID + start time). |
+| `IDLE` | rev | Alive, waiting on the wake cursor. |
 | `PACE` / `PARKED` | operator/agent → loop | Velocity command vs. the loop's acknowledgment (command ≠ state). |
 | `STOP` | operator | Clean halt between iterations. Never set by agents. |
 | `HOLD` | agent/operator | Intended hold — deliberate, not an anomaly, survives restart. |
-| `LIMIT` | capstan | Parked on a transient external condition (API 429/529, network outage). Retries on a timer; never treated as a fault — *a rescuer launched into the same dead API dies with the patient.* |
-| `BLOCKED` | capstan → human | Failure cap exceeded or unrecoverable fault. Escalates (below). |
+| `LIMIT` | rev | Parked on a transient external condition (API 429/529, network outage). Retries on a timer; never treated as a fault — *a rescuer launched into the same dead API dies with the patient.* |
+| `BLOCKED` | rev → human | Failure cap exceeded or unrecoverable fault. Escalates (below). |
 
 The ladder: transient conditions park and retry with a bounded streak; recoverable faults retry
 with a consecutive-failure cap; apparatus faults (missing constitution, unresolvable runtime) fail
@@ -105,14 +105,14 @@ everything else moot. The prototype's autonomous self-heal tier (a leader agent 
 loops) is deliberately deferred: v0 escalates to the human faster instead, and the tier can return
 once basic operation is boring.
 
-**Escalation surfaces in the work record, not in a log file.** When a loop goes BLOCKED, Capstan
+**Escalation surfaces in the work record, not in a log file.** When a loop goes BLOCKED, Rev
 files a ticket into Helm's awaiting-human queue — the operator's existing dashboard and meeting
 absorb harness operations with no new ritual. (Requires Helm's programmatic write path; tracked
 there.) A supervisor log line is a fact; a ticket is a summons.
 
 ## The watch officer — summonable ops role
 
-Capstan's interactive surface is a summonable context (the Helm orchestrator pattern): load
+Rev's interactive surface is a summonable context (the Helm orchestrator pattern): load
 `WATCH-OFFICER.md` into any agent session and it can read the machine's true state — sentinels,
 event traces, spend meter — explain it conversationally, and execute control verbs (pause, resume,
 pace, clear) on the operator's spoken instruction. Every verb is a sentinel write, so the role is
@@ -128,7 +128,7 @@ A read-only local web view (deliberately plain first, like Helm's): every loop's
 iteration and wake reason, failure streaks, pace, and spend — the at-a-glance answer to "is the
 machine healthy," replacing terminal status tables. Where a row references work (a BLOCKED loop's
 escalation ticket), it deep-links into Helm's dashboard. The two views stay separate products:
-Helm shows the work; Capstan shows the machine.
+Helm shows the work; Rev shows the machine.
 
 ## The runtime shim
 
@@ -165,7 +165,7 @@ per-loop pace tiers, machine-restart resilience (launchd/systemd service).
 
 Self-hostable by others; agent-led install as the primary path (an agent can install, register a
 loop, and hand back the dashboard link and summon instructions). No personal or instance context in
-the repo — enforced by the `~/.capstan/` boundary. Runtime-neutral: no agent CLI is privileged
+the repo — enforced by the `~/.rev/` boundary. Runtime-neutral: no agent CLI is privileged
 beyond having a shim. macOS and Linux.
 
 ## Open questions
@@ -173,8 +173,8 @@ beyond having a shim. macOS and Linux.
 1. **Wake query coupling** — direct read-only SQLite against Helm's store file (fast, but couples to
    schema) vs. a `helm` CLI query (clean contract, tracked Helm-side). Lean: CLI, with direct-read as
    a fallback optimization.
-2. **Capstan's Helm actor identity** — loops write as themselves; when *Capstan* files an escalation
-   ticket, it writes as what? Proposed: `{name: "capstan", kind: "agent"}` until Helm grows a
+2. **Rev's Helm actor identity** — loops write as themselves; when *Rev* files an escalation
+   ticket, it writes as what? Proposed: `{name: "rev", kind: "agent"}` until Helm grows a
    dedicated actor kind for machinery.
 3. **Iteration bounds** — the prototype caps iterations per launch (safety ceiling) and offers
    bounded runs for troubleshooting. Adopt as-is or simplify for v0?
@@ -183,7 +183,7 @@ beyond having a shim. macOS and Linux.
 
 ## Provenance
 
-Capstan generalizes a private prototype harness (2026) whose supervision model — sentinel state
+Rev generalizes a private prototype harness (2026) whose supervision model — sentinel state
 machine, failure ladder, healer-trap lesson, graceful drain, roster-as-data — was developed over
 months of continuous multi-loop operation, and whose orchestration philosophy (derive status from
 committed artifacts, never narration) also shaped Helm's evidence model. Prior art: the Ralph

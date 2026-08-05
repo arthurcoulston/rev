@@ -1,7 +1,7 @@
 {
-  "name": "capstan",
+  "name": "rev",
   "version": "0.1.0",
-  "description": "Capstan keeps agent loops turning: process supervision for autonomous agent loops driven by a Helm work record.",
+  "description": "Rev keeps agent loops turning: process supervision for autonomous agent loops driven by a Helm work record.",
   "main": "index.js",
   "scripts": {
     "test": "vitest run",
@@ -13,7 +13,7 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "capstan": "dist/cli.js"
+    "rev": "dist/cli.js"
   },
   "dependencies": {
     "smol-toml": "^1.7.1"

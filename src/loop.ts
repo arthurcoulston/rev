@@ -19,7 +19,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
 
   const existing = pidAlive(l.name);
   if (existing) {
-    throw new Error(`A '${l.name}' loop is already running (PID ${existing}). Check: capstan status`);
+    throw new Error(`A '${l.name}' loop is already running (PID ${existing}). Check: rev status`);
   }
   sSet(l.name, 'RUNNING', `${process.pid}\nstarted ${new Date().toISOString()}\n`);
   if (!sHas(l.name, 'PACE') && l.pace < 1) sSet(l.name, 'PACE', String(l.pace));
@@ -28,8 +28,8 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   process.on('SIGINT', () => process.exit(130));
   process.on('SIGTERM', () => process.exit(143));
 
-  console.log(`capstan: loop '${l.name}' | workstream ${l.workstream} | ${l.runtime}/${l.model} | cwd ${l.cwd}`);
-  console.log(`capstan: state ${dir} — stop it with: capstan stop ${l.name}`);
+  console.log(`rev: loop '${l.name}' | workstream ${l.workstream} | ${l.runtime}/${l.model} | cwd ${l.cwd}`);
+  console.log(`rev: state ${dir} — stop it with: rev stop ${l.name}`);
   logEvent(l.name, 'loop-start', `pid=${process.pid} count=${opts.count ?? 0}`);
 
   let i = 0;
@@ -42,7 +42,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     for (const s of ['STOP', 'HOLD', 'BLOCKED'] as const) {
       if (sHas(l.name, s)) {
         logEvent(l.name, 'loop-stop', `reason=${s} runs=${i}`);
-        console.log(`capstan: ${s} present — halting '${l.name}' after ${i} run(s).`);
+        console.log(`rev: ${s} present — halting '${l.name}' after ${i} run(s).`);
         return;
       }
     }
@@ -52,7 +52,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       if (!sHas(l.name, 'PARKED')) {
         sSet(l.name, 'PARKED', new Date().toISOString());
         logEvent(l.name, 'park');
-        console.log(`capstan: parked '${l.name}' (PACE=park); clear PACE to resume.`);
+        console.log(`rev: parked '${l.name}' (PACE=park); clear PACE to resume.`);
       }
       await sleep(g.poll_seconds);
       continue;
@@ -125,7 +125,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         if (touched.length) {
           const [primary, ...rest] = touched;
           const note =
-            `Metered by Capstan: loop '${l.name}' iteration ${i} (${l.runtime}/${l.model}), whole session charged to this ticket` +
+            `Metered by Rev: loop '${l.name}' iteration ${i} (${l.runtime}/${l.model}), whole session charged to this ticket` +
             (rest.length ? `; session also touched ${rest.map((t) => t.id).join(', ')}` : '') + '.';
           recordSpend(g, primary!.id, res.tokens, res.cost_usd, note);
           logEvent(l.name, 'spend', `iter=${i} ticket=${primary!.id} tokens=${res.tokens ?? '?'} cost=${res.cost_usd ?? '?'}`);
@@ -141,17 +141,17 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         logEvent(l.name, 'blocked', `reason=${action.reason}`);
         try {
           const id = escalateBlocked(g, l, action.reason, res.outputTail, dir);
-          console.log(`capstan: '${l.name}' BLOCKED — escalated as Helm ticket ${id}.`);
+          console.log(`rev: '${l.name}' BLOCKED — escalated as Helm ticket ${id}.`);
           logEvent(l.name, 'escalated', `ticket=${id}`);
         } catch (e) {
-          console.error(`capstan: '${l.name}' BLOCKED — AND the escalation to Helm failed (${String(e).slice(0, 200)}). The operator must find this in the dashboard/status.`);
+          console.error(`rev: '${l.name}' BLOCKED — AND the escalation to Helm failed (${String(e).slice(0, 200)}). The operator must find this in the dashboard/status.`);
           logEvent(l.name, 'escalate-failed', String(e).slice(0, 200));
         }
         return;
       }
       case 'limit_wait': {
         sSet(l.name, 'LIMIT', `attempt=${action.attempt}\nretry_s=${action.waitSeconds}\n`);
-        console.log(`capstan: transient condition — parking '${l.name}' ${action.waitSeconds}s (attempt ${action.attempt}/${g.limit_cap}).`);
+        console.log(`rev: transient condition — parking '${l.name}' ${action.waitSeconds}s (attempt ${action.attempt}/${g.limit_cap}).`);
         let waited = 0;
         while (waited < action.waitSeconds && !sHas(l.name, 'STOP') && !sHas(l.name, 'BLOCKED')) {
           await sleep(Math.min(60, action.waitSeconds - waited));
@@ -164,7 +164,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         streakReset(l.name, 'fail', 'limit');
         const after = wakeCheck(g, l, 0);
         sSet(l.name, 'IDLE', String(after.max_seq));
-        console.log(`capstan: no production this iteration — IDLE at seq ${after.max_seq}.`);
+        console.log(`rev: no production this iteration — IDLE at seq ${after.max_seq}.`);
         break;
       }
       case 'continue':
@@ -173,12 +173,12 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     }
 
     if (opts.count && i >= opts.count) {
-      console.log(`capstan: requested run count (${opts.count}) reached — halting '${l.name}'.`);
+      console.log(`rev: requested run count (${opts.count}) reached — halting '${l.name}'.`);
       logEvent(l.name, 'loop-stop', `reason=count runs=${i}`);
       return;
     }
     if (i >= g.iteration_ceiling) {
-      console.log(`capstan: iteration ceiling (${g.iteration_ceiling}) reached — halting '${l.name}'.`);
+      console.log(`rev: iteration ceiling (${g.iteration_ceiling}) reached — halting '${l.name}'.`);
       logEvent(l.name, 'loop-stop', `reason=ceiling runs=${i}`);
       return;
     }

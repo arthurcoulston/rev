@@ -1,4 +1,4 @@
-// Capstan's only knowledge of Helm: the helm-cli subprocess contract.
+// Rev's only knowledge of Helm: the helm-cli subprocess contract.
 // Deliberately a subprocess, not a library import — the CLI is Helm's public
 // programmatic surface, and consuming it keeps that contract honest.
 import { execFileSync } from 'node:child_process';
@@ -20,9 +20,9 @@ export interface WorkstreamInfo {
 
 function run(g: GlobalConfig, args: string[], actor?: object): unknown {
   const env: NodeJS.ProcessEnv = { ...process.env };
-  if (g.helm_db) env['HELMO_DB'] = g.helm_db;
+  if (g.helmo_db) env['HELMO_DB'] = g.helmo_db;
   if (actor) env['HELMO_ACTOR'] = JSON.stringify(actor);
-  const out = execFileSync('node', [g.helm_cli, ...args], { env, encoding: 'utf8' });
+  const out = execFileSync('node', [g.helmo_cli, ...args], { env, encoding: 'utf8' });
   return JSON.parse(out);
 }
 
@@ -30,8 +30,8 @@ export function loopActor(l: LoopConfig): object {
   return { name: l.name, kind: 'agent', model: l.model, version: l.version };
 }
 
-export function capstanActor(): object {
-  return { name: 'capstan', kind: 'agent', model: 'capstan-harness', version: '0.1.0' };
+export function revActor(): object {
+  return { name: 'rev', kind: 'agent', model: 'rev-harness', version: '0.1.0' };
 }
 
 export function wakeCheck(g: GlobalConfig, l: LoopConfig, sinceSeq: number): WakeCheck {
@@ -60,13 +60,13 @@ export function actorTickets(g: GlobalConfig, name: string, sinceSeq: number): {
   return (run(g, ['actor-tickets', '--name', name, '--since-seq', String(sinceSeq)]) as { tickets: { id: string; events: number }[] }).tickets;
 }
 
-// Spend is written by Capstan (the meter), not the loop's agent — the agent
+// Spend is written by Rev (the meter), not the loop's agent — the agent
 // never saw its own usage, and the provenance should say who measured.
 export function recordSpend(g: GlobalConfig, ticketId: string, tokens: number | undefined, cost: number | undefined, note: string): void {
   const args = ['record-spend', '--ticket', ticketId, '--note', note];
   if (tokens) args.push('--tokens', String(tokens));
   if (cost) args.push('--cost-usd', String(cost));
-  run(g, args, capstanActor());
+  run(g, args, revActor());
 }
 
 // A BLOCKED loop is a summons, not a log line: file it straight into the
@@ -78,12 +78,12 @@ export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, 
       'create',
       '--title', `Loop '${l.name}' is blocked: needs a decision`,
       '--body',
-      `Capstan halted loop '${l.name}' (workstream ${l.workstream}). Reason: ${reason}.\n\nState dir: ${stateDir} (events.log has the trace; console tail below).\nTo resume after fixing: remove the BLOCKED sentinel and run \`capstan run ${l.name}\`.\n\nLast session output:\n${outputTail.slice(-1500)}`,
+      `Rev halted loop '${l.name}' (workstream ${l.workstream}). Reason: ${reason}.\n\nState dir: ${stateDir} (events.log has the trace; console tail below).\nTo resume after fixing: remove the BLOCKED sentinel and run \`rev run ${l.name}\`.\n\nLast session output:\n${outputTail.slice(-1500)}`,
       '--workstream', g.escalation_workstream,
       '--type', 'ops',
       '--priority', '1',
     ],
-    capstanActor(),
+    revActor(),
   ) as { id: string };
   run(
     g,
@@ -100,7 +100,7 @@ export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, 
       '--recommendation', reason.includes('transient') ? 'resume — the condition was external and has likely lifted' : 'investigate — consecutive failures usually mean something real',
       '--if-unanswered', `workstream '${l.workstream}' has no worker until this is answered`,
     ],
-    capstanActor(),
+    revActor(),
   );
   return created.id;
 }

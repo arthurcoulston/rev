@@ -1,8 +1,10 @@
-# DEV — coding context for capstan
+# DEV — coding context for rev
 
-Capstan keeps agent loops turning: process supervision for autonomous loops
-that draw work from Helmo. Capstan never reads ticket content; Helmo never
-manages a process. Product doc: `capstan-product-description.md`.
+Rev keeps agent loops turning: process supervision for autonomous loops
+that draw work from Helmo. Rev never reads ticket content; Helmo never
+manages a process. Product doc: `rev-product-description.md`.
+Renamed from Capstan 2026-08-05 (H-53); Helm records before then carry the
+old name, and closed tickets stay in the `capstan-dev` workstream unrewritten.
 
 ## Architecture (src/)
 
@@ -13,8 +15,8 @@ manages a process. Product doc: `capstan-product-description.md`.
   (helm-cli `workstream`: goal + remaining budget, helmo H-55) — disclosure
   before planning, and a steering fetch failure never stops the loop. After
   each iteration it writes the session's metered spend back to the
-  most-touched ticket via helm-cli `record-spend` (H-19) — as the capstan
-  actor, since Capstan is the meter, not the spender.
+  most-touched ticket via helm-cli `record-spend` (H-19) — as the rev
+  actor, since Rev is the meter, not the spender.
 - `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent
   CLAUDE/ANTHROPIC env — the auth-leak fix; don't weaken it), per-session token
@@ -23,7 +25,7 @@ manages a process. Product doc: `capstan-product-description.md`.
 - `ladder.ts` — pure decision functions for the failure ladder (transient ≠
   failure ≠ apparatus). Unit-tested; change with tests.
 - `sentinels.ts` / `config.ts` — sentinel files + roster loading. Instance data
-  lives in `~/.capstan/` (roster.toml, mcp/, state/<loop>/, token-log), NEVER
+  lives in `~/.rev/` (roster.toml, mcp/, state/<loop>/, token-log), NEVER
   in this repo — publishability is structural.
 - `view.ts` — read-only machine dashboard at :4500. `cli.ts` — run / status /
   stop / resume / pace / tail.
@@ -33,8 +35,8 @@ manages a process. Product doc: `capstan-product-description.md`.
 - `npm run build`, `npm test` (ladder units + e2e with mock runtime).
 - Drive a loop: `node dist/cli.js run <loop> [--count N]` (foreground; detach
   deliberately). `--count 1` is the assess-early lever.
-- Dashboard: `node dist/view.js` (`CAPSTAN_VIEW_PORT`, default 4500; binds
-  127.0.0.1, `CAPSTAN_VIEW_HOST` to change) — restart after rebuild.
+- Dashboard: `node dist/view.js` (`REV_VIEW_PORT`, default 4500; binds
+  127.0.0.1, `REV_VIEW_HOST` to change) — restart after rebuild.
 
 ## Invariants that bite
 

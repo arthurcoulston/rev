@@ -4,11 +4,11 @@
 import { createServer } from 'node:http';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { capstanHome, loadRoster, stateDir, tokenLogPath } from './config.js';
+import { revHome, loadRoster, stateDir, tokenLogPath } from './config.js';
 import { pidAlive, sGet, sHas } from './sentinels.js';
 
-const port = Number(process.env['CAPSTAN_VIEW_PORT'] ?? 4500);
-const host = process.env['CAPSTAN_VIEW_HOST'] ?? '127.0.0.1';
+const port = Number(process.env['REV_VIEW_PORT'] ?? 4500);
+const host = process.env['REV_VIEW_HOST'] ?? '127.0.0.1';
 const esc = (s: unknown) =>
   String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
 
@@ -69,7 +69,7 @@ createServer((_req, res) => {
     })
     .join('\n');
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-  res.end(`<!doctype html><meta charset="utf-8"><title>Capstan</title>
+  res.end(`<!doctype html><meta charset="utf-8"><title>Rev</title>
   <meta http-equiv="refresh" content="10">
   <style>
     body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; max-width: 1250px; }
@@ -85,7 +85,7 @@ createServer((_req, res) => {
     .dim { color: #bbb; }
     h1 span { color: #999; font-weight: normal; font-size: 15px; }
   </style>
-  <h1>Capstan <span>the machine, read-only · home ${esc(capstanHome())} · work lives in <a href="http://localhost:4400">Helm</a></span></h1>
+  <h1>Rev <span>the machine, read-only · home ${esc(revHome())} · work lives in <a href="http://localhost:4400">Helm</a></span></h1>
   <table><tr><th>Loop</th><th>State</th><th>Workstream</th><th>Runtime</th><th>Pace</th><th>Spend</th><th>Recent trace</th></tr>
   ${rows || '<tr><td colspan="7">No loops in the roster yet.</td></tr>'}</table>`);
-}).listen(port, host, () => console.log(`Capstan view (read-only): http://localhost:${port} — home: ${capstanHome()}`));
+}).listen(port, host, () => console.log(`Rev view (read-only): http://localhost:${port} — home: ${revHome()}`));
