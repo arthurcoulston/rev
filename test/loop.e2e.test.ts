@@ -89,6 +89,24 @@ fi
     expect(events).toMatch(/action=idle/);
   });
 
+  it('workstream steering (goal + budget) lands in the iteration prompt', () => {
+    const e = setup(`[loops.steer-loop]
+workstream = "capstan-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = 'echo "PROMPT:$CAPSTAN_PROMPT"'
+`);
+    seedTicket(e, 'Steered work item');
+    helm(
+      e,
+      ['workstream-set', '--name', 'capstan-test', '--goal', 'the gala happens', '--budget-usd', '50'],
+      '{"name":"operator","kind":"human"}',
+    );
+    const out = capstan(e, ['run', 'steer-loop', '--count', '1']);
+    expect(out).toContain('what done means for the whole stream: the gala happens');
+    expect(out).toContain('$0.00 of $50.00 spent');
+  });
+
   it('repeated failure hits the cap, sets BLOCKED, and escalates into the Helm queue', () => {
     const e = setup(`[loops.bad-loop]
 workstream = "capstan-test"

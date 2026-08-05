@@ -10,6 +10,14 @@ export interface WakeCheck {
   changed_since: boolean;
 }
 
+export interface WorkstreamInfo {
+  name: string;
+  goal: string | null;
+  budget_usd: number | null;
+  spent_usd: number;
+  remaining_usd: number | null;
+}
+
 function run(g: GlobalConfig, args: string[], actor?: object): unknown {
   const env: NodeJS.ProcessEnv = { ...process.env };
   if (g.helm_db) env['HELMO_DB'] = g.helm_db;
@@ -30,6 +38,18 @@ export function wakeCheck(g: GlobalConfig, l: LoopConfig, sinceSeq: number): Wak
   return run(g, [
     'wake-check', '--workstream', l.workstream, '--assignee', l.name, '--since-seq', String(sinceSeq),
   ]) as WakeCheck;
+}
+
+// Steering disclosure (helmo H-55): the goal and remaining budget go into
+// every iteration prompt. Failure here must never stop the loop — steering
+// is guidance, and a loop that halts because guidance was unreadable has
+// inverted the priority.
+export function workstreamInfo(g: GlobalConfig, name: string): WorkstreamInfo | null {
+  try {
+    return run(g, ['workstream', '--name', name]) as WorkstreamInfo;
+  } catch {
+    return null;
+  }
 }
 
 export function actorActivity(g: GlobalConfig, name: string, sinceSeq: number): number {

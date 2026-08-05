@@ -9,9 +9,12 @@ manages a process. Product doc: `capstan-product-description.md`.
 - `loop.ts` — the single-loop driver: wake on Helmo's event cursor (zero tokens
   while idle), spawn one fresh session per iteration, classify the outcome,
   idle or halt. The iteration prompt ("work ONE ticket to a natural stopping
-  point") lives here. After each iteration it writes the session's metered
-  spend back to the most-touched ticket via helm-cli `record-spend` (H-19) —
-  as the capstan actor, since Capstan is the meter, not the spender.
+  point") lives here, and it opens with the workstream's steering when set
+  (helm-cli `workstream`: goal + remaining budget, helmo H-55) — disclosure
+  before planning, and a steering fetch failure never stops the loop. After
+  each iteration it writes the session's metered spend back to the
+  most-touched ticket via helm-cli `record-spend` (H-19) — as the capstan
+  actor, since Capstan is the meter, not the spender.
 - `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent
   CLAUDE/ANTHROPIC env — the auth-leak fix; don't weaken it), per-session token

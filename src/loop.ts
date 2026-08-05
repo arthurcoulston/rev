@@ -2,7 +2,7 @@
 // the outcome through the ladder, idle or halt. v0 runs one loop in the
 // foreground; the multi-loop supervisor is the next milestone.
 import { stateDir } from './config.js';
-import { actorActivity, actorTickets, escalateBlocked, recordSpend, wakeCheck } from './helm.js';
+import { actorActivity, actorTickets, escalateBlocked, recordSpend, wakeCheck, workstreamInfo } from './helm.js';
 import { ladderDecide, rollingMean, velocityToPause } from './ladder.js';
 import { logEvent, pidAlive, sClear, sGet, sHas, sSet, streak, streakReset } from './sentinels.js';
 import { runSession } from './shim.js';
@@ -81,9 +81,19 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     logEvent(l.name, 'run-start', `iter=${i} seq=${before.max_seq}`);
     console.log(`=== ${l.name} run ${i} started ${new Date().toISOString()} ===`);
 
+    // Steering disclosure up front (helmo H-55): a budget known before
+    // planning changes what gets worked first; discovered at the end, it is
+    // only a verdict.
+    const ws = workstreamInfo(g, l.workstream);
+    const steering =
+      (ws?.goal ? `The workstream's goal — what done means for the whole stream: ${ws.goal}. If the goal is already met, closing out is the right move; do not manufacture polish. ` : '') +
+      (ws?.budget_usd
+        ? `Budget: $${ws.spent_usd.toFixed(2)} of $${ws.budget_usd.toFixed(2)} spent, $${(ws.remaining_usd ?? 0).toFixed(2)} remains. The budget is the plan — take the highest-value work first; if it is exhausted, close out honestly with residuals documented rather than starting more. `
+        : '');
     const prompt =
       `Loop iteration ${i} for agent '${l.name}'. Working directory: ${l.cwd}. ` +
       `Use your Helm tools: first list tickets assigned to you, then ready work in workstream '${l.workstream}'. ` +
+      steering +
       `Work ONE ticket to a natural stopping point, record progress honestly, then end the session. ${l.prompt ?? ''}`;
     const res = runSession(g, l, prompt);
 
