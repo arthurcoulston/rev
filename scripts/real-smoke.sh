@@ -39,7 +39,7 @@ cat > "$HOME_DIR/constitutions/smoke-worker.md" <<'EOF'
 You are smoke-worker, a test agent verifying the Rev loop harness. You have Helm MCP tools (helm_*). Each iteration: list ready work in your workstream, claim ONE ticket, do exactly what its body says, mark it done with evidence, and end the session. Be brief; this is a plumbing test.
 EOF
 
-HELM_DB="$DB" HELM_ACTOR='{"name":"seeder","kind":"agent","model":"smoke","version":"0"}' \
+HELMO_DB="$DB" HELMO_ACTOR='{"name":"seeder","kind":"agent","model":"smoke","version":"0"}' \
   node "$HELM/dist/cli.js" create --title "Smoke: write the proof file" \
   --body "Create a file named proof.txt in your working directory containing exactly the line: rev turns. Then mark this ticket done with a file evidence link to it." \
   --workstream rev-test --type ops > /dev/null
@@ -48,7 +48,7 @@ echo "Running one real iteration ($MODEL)..."
 REV_HOME="$HOME_DIR" node "$REV/dist/cli.js" run smoke-worker --count 1
 
 echo
-STATUS=$(HELM_DB="$DB" node "$HELM/dist/cli.js" get H-1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.status+' evidence='+(j.evidence?.length??0))})" 2>/dev/null || echo "unreadable")
+STATUS=$(HELMO_DB="$DB" node "$HELM/dist/cli.js" get H-1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.status+' evidence='+(j.evidence?.length??0))})" 2>/dev/null || echo "unreadable")
 PROOF="missing"
 [ -f "$HOME_DIR/work/proof.txt" ] && grep -q "rev turns" "$HOME_DIR/work/proof.txt" && PROOF="present"
 
