@@ -12,8 +12,8 @@ export interface WakeCheck {
 
 function run(g: GlobalConfig, args: string[], actor?: object): unknown {
   const env: NodeJS.ProcessEnv = { ...process.env };
-  if (g.helm_db) env['HELM_DB'] = g.helm_db;
-  if (actor) env['HELM_ACTOR'] = JSON.stringify(actor);
+  if (g.helm_db) env['HELMO_DB'] = g.helm_db;
+  if (actor) env['HELMO_ACTOR'] = JSON.stringify(actor);
   const out = execFileSync('node', [g.helm_cli, ...args], { env, encoding: 'utf8' });
   return JSON.parse(out);
 }

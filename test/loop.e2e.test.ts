@@ -8,7 +8,7 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const HELM = join(import.meta.dirname, '..', '..', 'helm');
+const HELM = join(import.meta.dirname, '..', '..', 'helmo');
 const HELM_CLI = join(HELM, 'dist', 'cli.js');
 const CAPSTAN_CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 
@@ -32,12 +32,12 @@ fail_cap = 1
 ${loopToml}`,
   );
   mkdirSync(join(home, 'work'), { recursive: true });
-  return { home, db, env: { ...process.env, CAPSTAN_HOME: home, HELM_DB: db } };
+  return { home, db, env: { ...process.env, CAPSTAN_HOME: home, HELMO_DB: db } };
 }
 
 function helm(e: Env, args: string[], actor = '{"name":"seeder","kind":"agent","model":"t","version":"0"}'): Record<string, unknown> {
   return JSON.parse(
-    execFileSync('node', [HELM_CLI, ...args], { env: { ...e.env, HELM_ACTOR: actor }, encoding: 'utf8' }),
+    execFileSync('node', [HELM_CLI, ...args], { env: { ...e.env, HELMO_ACTOR: actor }, encoding: 'utf8' }),
   ) as Record<string, unknown>;
 }
 

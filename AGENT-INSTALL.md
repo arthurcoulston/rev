@@ -1,8 +1,8 @@
 # Installing Capstan (agent-led)
 
 You are an agent installing Capstan for a human. Run it end to end, verify each step, and
-finish with the report-back template at the bottom. Capstan requires a working Helm install
-(the work record it draws from) — if Helm is not installed, do that first via Helm's own
+finish with the report-back template at the bottom. Capstan requires a working Helmo install
+(the work record it draws from) — if Helmo is not installed, do that first via Helmo's own
 AGENT-INSTALL.md, then return here.
 
 ## Steps
@@ -10,8 +10,8 @@ AGENT-INSTALL.md, then return here.
 ### 1. Prerequisites
 
 - Node.js >= 20, git.
-- A built Helm checkout: confirm `<helm-path>/dist/cli.js` and `<helm-path>/dist/server.js`
-  exist (build with `npm run build` in the Helm checkout if not).
+- A built Helmo checkout: confirm `<helmo-path>/dist/cli.js` and `<helmo-path>/dist/server.js`
+  exist (build with `npm run build` in the Helmo checkout if not).
 
 ### 2. Get and build
 
@@ -21,7 +21,7 @@ cd ~/tools/capstan
 npm install && npm run build && npm test
 ```
 
-All tests must pass (the e2e suite exercises a mock loop against a temp Helm store). If they
+All tests must pass (the e2e suite exercises a mock loop against a temp Helmo store). If they
 fail, report the failure and stop.
 
 ### 3. Create the instance home
@@ -31,7 +31,7 @@ mkdir -p ~/.capstan/constitutions
 cp examples/roster.toml ~/.capstan/roster.toml
 ```
 
-Edit `~/.capstan/roster.toml`: set `helm_cli` and `helm_mcp_server` to the Helm checkout's
+Edit `~/.capstan/roster.toml`: set `helm_cli` and `helm_mcp_server` to the Helmo checkout's
 built paths. Do not define worker loops yet unless the human has already authored a
 constitution — a loop without a deliberate constitution is a worker without a character.
 
@@ -40,9 +40,9 @@ constitution — a loop without a deliberate constitution is a worker without a 
 Add (or uncomment) the mock smoke loop in the roster, then:
 
 ```bash
-node <helm-path>/dist/cli.js create --title "Capstan install check" \
+node <helmo-path>/dist/cli.js create --title "Capstan install check" \
   --body "synthetic ticket for install verification" --workstream capstan-test --type ops \
-  # needs HELM_ACTOR env — see Helm's install doc
+  # needs HELMO_ACTOR env — see Helmo's install doc
 npx capstan run smoke --count 1
 npx capstan status
 ```
@@ -63,9 +63,9 @@ Read-only at `http://localhost:4500` (`CAPSTAN_VIEW_PORT` to change). Verify it 
 > Capstan is installed and verified.
 >
 > - **Dashboard** (read-only): http://localhost:4500 — every loop's state, pace, spend, and
->   recent trace. Work itself lives in Helm: http://localhost:4400.
+>   recent trace. Work itself lives in Helmo: http://localhost:4400.
 > - **Run a loop**: `capstan run <name>` (foreground, v0). Control: `capstan stop|resume|pace`.
-> - **When a loop needs you**, it files a ticket into Helm's awaiting-you queue — your normal
+> - **When a loop needs you**, it files a ticket into Helmo's awaiting-you queue — your normal
 >   meeting surfaces it. No log-watching required.
 > - **To inspect the machine conversationally**: say "summon the watch officer" in any agent
 >   session and have it load `<capstan-path>/WATCH-OFFICER.md`.
@@ -79,7 +79,7 @@ keychain-guarded and granted only to the human's terminal app — an agent-run s
 as logged-out even though the harness is fine. Ask the human to run, in their own terminal:
 
 ```bash
-cd <capstan-path> && chmod +x scripts/real-smoke.sh && scripts/real-smoke.sh <helm-path>
+cd <capstan-path> && chmod +x scripts/real-smoke.sh && scripts/real-smoke.sh <helmo-path>
 ```
 
 One isolated iteration; prints `REAL-SMOKE PASS` on success. Include this ask in your report.
@@ -88,5 +88,5 @@ One isolated iteration; prints `REAL-SMOKE PASS` on success. Include this ask in
 
 - Instance data (roster, constitutions, state) lives in `~/.capstan/` — nothing
   operator-specific ever enters this repo.
-- The roster's `helm_cli`/`helm_mcp_server` point at built files: after updating Helm, rebuild
+- The roster's `helm_cli`/`helm_mcp_server` point at built files: after updating Helmo, rebuild
   it or loops get the stale server.

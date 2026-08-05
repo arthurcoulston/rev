@@ -1,7 +1,7 @@
 export interface GlobalConfig {
   helm_cli: string;        // path to helm's dist/cli.js
   helm_mcp_server: string; // path to helm's dist/server.js (injected into agent sessions)
-  helm_db?: string;        // optional HELM_DB override
+  helm_db?: string;        // optional HELMO_DB override
   poll_seconds: number;    // idle wake-poll interval
   iteration_ceiling: number;
   fail_cap: number;        // consecutive runtime failures before BLOCKED

@@ -46,10 +46,10 @@ export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: stri
 // identity) plus any extra servers the loop declares. --strict-mcp-config keeps
 // ambient user-scope servers out of headless sessions.
 function writeMcpConfig(g: GlobalConfig, l: LoopConfig, dir: string): string {
-  const helmEnv: Record<string, string> = { HELM_ACTOR: JSON.stringify(loopActor(l)) };
-  if (g.helm_db) helmEnv['HELM_DB'] = g.helm_db;
+  const helmEnv: Record<string, string> = { HELMO_ACTOR: JSON.stringify(loopActor(l)) };
+  if (g.helm_db) helmEnv['HELMO_DB'] = g.helm_db;
   const servers: Record<string, unknown> = {
-    helm: { command: 'node', args: [g.helm_mcp_server], env: helmEnv },
+    helmo: { command: 'node', args: [g.helm_mcp_server], env: helmEnv },
   };
   if (l.mcp_extra && existsSync(l.mcp_extra)) {
     Object.assign(servers, (JSON.parse(readFileSync(l.mcp_extra, 'utf8')) as { mcpServers?: Record<string, unknown> }).mcpServers ?? {});
@@ -149,7 +149,7 @@ function runMock(l: LoopConfig, prompt: string): SessionResult {
   const res = spawnSync('bash', ['-c', l.mock_cmd], {
     cwd: l.cwd,
     encoding: 'utf8',
-    env: { ...cleanEnv(), CAPSTAN_LOOP: l.name, CAPSTAN_PROMPT: prompt, HELM_ACTOR: JSON.stringify(loopActor(l)) },
+    env: { ...cleanEnv(), CAPSTAN_LOOP: l.name, CAPSTAN_PROMPT: prompt, HELMO_ACTOR: JSON.stringify(loopActor(l)) },
   });
   const rc = res.status ?? 1;
   const cls = rc === 0 ? 'ok' : rc === 75 ? 'transient' : rc === 78 ? 'apparatus' : 'failure';
