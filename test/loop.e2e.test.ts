@@ -89,6 +89,32 @@ fi
     expect(events).toMatch(/action=idle/);
   });
 
+  it('nets out agent self-reported spend so the session lands in the totals exactly once (H-57)', () => {
+    // The mock misbehaves: it guesses its own usage in an update. The metered
+    // figure must win — final totals equal the meter, not meter + guess.
+    const e = setup(`[loops.guess-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+set -e
+ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -n "$ID" ]; then
+  node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
+  node ${HELM_CLI} update --ticket $ID --note "guessing my spend" --tokens 5000 --cost-usd 5 --status done --evidence-kind file --evidence-ref /tmp/out
+  echo "rev-mock-usage tokens=1200 cost_usd=0.25"
+fi
+'''
+`);
+    const id = seedTicket(e, 'Work the guessing loop will inflate');
+    rev(e, ['run', 'guess-loop', '--count', '1']);
+    const ticket = helm(e, ['get', id]) as { tokens_total: number; cost_usd_total: number };
+    expect(ticket.tokens_total).toBe(1200);
+    expect(ticket.cost_usd_total).toBeCloseTo(0.25);
+    const events = readFileSync(join(e.home, 'state', 'guess-loop', 'events.log'), 'utf8');
+    expect(events).toMatch(new RegExp(`spend\\s+iter=1 ticket=${id} tokens=-3800 cost=-4\\.75`));
+  });
+
   it('workstream steering (goal + budget) lands in the iteration prompt', () => {
     const e = setup(`[loops.steer-loop]
 workstream = "rev-test"

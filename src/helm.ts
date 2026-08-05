@@ -60,6 +60,10 @@ export function actorTickets(g: GlobalConfig, name: string, sinceSeq: number): {
   return (run(g, ['actor-tickets', '--name', name, '--since-seq', String(sinceSeq)]) as { tickets: { id: string; events: number }[] }).tickets;
 }
 
+export function actorSelfSpend(g: GlobalConfig, name: string, sinceSeq: number): { tokens: number; cost_usd: number } {
+  return run(g, ['actor-spend', '--name', name, '--since-seq', String(sinceSeq)]) as { tokens: number; cost_usd: number };
+}
+
 // Spend is written by Rev (the meter), not the loop's agent — the agent
 // never saw its own usage, and the provenance should say who measured.
 export function recordSpend(g: GlobalConfig, ticketId: string, tokens: number | undefined, cost: number | undefined, note: string): void {

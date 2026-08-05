@@ -2,7 +2,7 @@
 // the outcome through the ladder, idle or halt. v0 runs one loop in the
 // foreground; the multi-loop supervisor is the next milestone.
 import { stateDir } from './config.js';
-import { actorActivity, actorTickets, escalateBlocked, recordSpend, wakeCheck, workstreamInfo } from './helm.js';
+import { actorActivity, actorSelfSpend, actorTickets, escalateBlocked, recordSpend, wakeCheck, workstreamInfo } from './helm.js';
 import { ladderDecide, rollingMean, velocityToPause } from './ladder.js';
 import { logEvent, pidAlive, sClear, sGet, sHas, sSet, streak, streakReset } from './sentinels.js';
 import { runSession } from './shim.js';
@@ -124,11 +124,22 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         const touched = actorTickets(g, l.name, before.max_seq);
         if (touched.length) {
           const [primary, ...rest] = touched;
-          const note =
-            `Metered by Rev: loop '${l.name}' iteration ${i} (${l.runtime}/${l.model}), whole session charged to this ticket` +
-            (rest.length ? `; session also touched ${rest.map((t) => t.id).join(', ')}` : '') + '.';
-          recordSpend(g, primary!.id, res.tokens, res.cost_usd, note);
-          logEvent(l.name, 'spend', `iter=${i} ticket=${primary!.id} tokens=${res.tokens ?? '?'} cost=${res.cost_usd ?? '?'}`);
+          // Net out anything the agent self-reported this session: the meter
+          // is authoritative, and a session must land in the totals exactly
+          // once (H-57). A negative delta is reconciliation, not refund.
+          const self = actorSelfSpend(g, l.name, before.max_seq);
+          const tokens = (res.tokens ?? 0) - self.tokens;
+          const cost = (res.cost_usd ?? 0) - self.cost_usd;
+          if (tokens || cost) {
+            const note =
+              `Metered by Rev: loop '${l.name}' iteration ${i} (${l.runtime}/${l.model}), whole session charged to this ticket` +
+              (rest.length ? `; session also touched ${rest.map((t) => t.id).join(', ')}` : '') +
+              (self.tokens || self.cost_usd
+                ? `; net of ${self.tokens} tokens / $${self.cost_usd.toFixed(2)} the agent self-reported (the meter is authoritative)`
+                : '') + '.';
+            recordSpend(g, primary!.id, tokens, cost, note);
+            logEvent(l.name, 'spend', `iter=${i} ticket=${primary!.id} tokens=${tokens} cost=${cost}`);
+          }
         }
       } catch (e) {
         logEvent(l.name, 'spend-failed', `iter=${i} ${String(e).slice(0, 200)}`);

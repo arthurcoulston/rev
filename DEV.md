@@ -16,7 +16,9 @@ old name, and closed tickets stay in the `capstan-dev` workstream unrewritten.
   before planning, and a steering fetch failure never stops the loop. After
   each iteration it writes the session's metered spend back to the
   most-touched ticket via helm-cli `record-spend` (H-19) — as the rev
-  actor, since Rev is the meter, not the spender.
+  actor, since Rev is the meter, not the spender — net of anything the agent
+  self-reported in the window (`actor-spend`, H-57): a session lands in the
+  totals exactly once, and a negative delta is reconciliation, not refund.
 - `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent
   CLAUDE/ANTHROPIC env — the auth-leak fix; don't weaken it), per-session token
