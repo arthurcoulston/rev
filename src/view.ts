@@ -17,6 +17,7 @@ function state(name: string): string {
   if (sHas(name, 'STOP')) return 'STOP';
   if (sHas(name, 'HOLD')) return 'HOLD';
   if (sHas(name, 'BLOCKED')) return 'BLOCKED';
+  if (!pid && sHas(name, 'BACKOFF')) return 'BACKOFF';
   if (pid && sHas(name, 'LIMIT')) return 'LIMIT';
   if (pid && sHas(name, 'PARKED')) return 'PARKED';
   if (pid && sHas(name, 'IDLE')) return 'IDLE';
@@ -79,13 +80,13 @@ createServer((_req, res) => {
     .name { font-family: ui-monospace, monospace; }
     .st { font-weight: 600; }
     .st-RUNNING { color: #167c2e; } .st-IDLE { color: #666; } .st-BLOCKED, .st-CRASHED { color: #b00; }
-    .st-LIMIT, .st-PARKED { color: #b60; } .st-STOP, .st-HOLD, .st-halted { color: #999; }
+    .st-LIMIT, .st-PARKED, .st-BACKOFF { color: #b60; } .st-STOP, .st-HOLD, .st-halted { color: #999; }
     .trace { font-family: ui-monospace, monospace; font-size: 11px; color: #555; }
     .blockreason { font-weight: 400; font-size: 12px; color: #b00; }
     .dim { color: #bbb; }
     h1 span { color: #999; font-weight: normal; font-size: 15px; }
   </style>
-  <h1>Rev <span>the machine, read-only · home ${esc(revHome())} · work lives in <a href="http://localhost:4400">Helm</a></span></h1>
+  <h1>Rev <span>the machine, read-only · supervisor ${pidAlive('supervisor') ? `running (pid ${pidAlive('supervisor')})` : 'down'} · home ${esc(revHome())} · work lives in <a href="http://localhost:4400">Helm</a></span></h1>
   <table><tr><th>Loop</th><th>State</th><th>Workstream</th><th>Runtime</th><th>Pace</th><th>Spend</th><th>Recent trace</th></tr>
   ${rows || '<tr><td colspan="7">No loops in the roster yet.</td></tr>'}</table>`);
 }).listen(port, host, () => console.log(`Rev view (read-only): http://localhost:${port} — home: ${revHome()}`));

@@ -64,7 +64,11 @@ Read-only at `http://localhost:4500`, bound to 127.0.0.1 (`REV_VIEW_PORT` / `REV
 >
 > - **Dashboard** (read-only): http://localhost:4500 — every loop's state, pace, spend, and
 >   recent trace. Work itself lives in Helmo: http://localhost:4400.
-> - **Run a loop**: `rev run <name>` (foreground, v0). Control: `rev stop|resume|pace`.
+> - **Start the machine**: `rev run` (every roster loop under the supervisor). Stop it:
+>   `rev stop` (graceful drain). Per-loop control: `rev stop|resume|pace <name>`.
+> - **Survive reboots**: `rev service install` registers the supervisor as a user service
+>   (launchd/systemd) — offer this, but install only on the human's say-so: it changes what
+>   runs at login.
 > - **When a loop needs you**, it files a ticket into Helmo's awaiting-you queue — your normal
 >   meeting surfaces it. No log-watching required.
 > - **To inspect the machine conversationally**: say "summon the watch officer" in any agent

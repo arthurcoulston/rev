@@ -17,6 +17,9 @@ const GLOBAL_DEFAULTS = {
   limit_wait_seconds: 900,
   limit_cap: 20,
   escalation_workstream: 'rev',
+  respawn_backoff_seconds: 30,
+  respawn_backoff_cap_seconds: 900,
+  min_uptime_seconds: 60,
 };
 
 export interface Roster {
@@ -41,6 +44,7 @@ export function loadRoster(): Roster {
   const loops: Record<string, LoopConfig> = {};
   const rawLoops = (raw['loops'] ?? {}) as Record<string, Record<string, unknown>>;
   for (const [name, l] of Object.entries(rawLoops)) {
+    if (name === 'supervisor') throw new Error("'supervisor' is a reserved name (the fleet supervisor's own state dir).");
     for (const key of ['workstream', 'cwd', 'runtime', 'model', 'constitution']) {
       if (l[key] === undefined && !(l['runtime'] === 'mock' && (key === 'model' || key === 'constitution'))) {
         throw new Error(`Loop '${name}' in roster.toml is missing '${key}'.`);

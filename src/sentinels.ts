@@ -13,6 +13,7 @@ import { Sentinel } from './types.js';
 //   RUNNING  rev: pid + start stamp of the live loop process
 //   PACE     operator/agent: velocity command ("park" or fraction (0,1])
 //   PARKED   loop: acknowledgment that it has actually parked (command != state)
+//   BACKOFF  supervisor: loop crashed; respawn pending (contents = attempt + retry time)
 
 export function sPath(loop: string, s: Sentinel | string): string {
   return join(stateDir(loop), s);

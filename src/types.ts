@@ -8,6 +8,9 @@ export interface GlobalConfig {
   limit_wait_seconds: number;   // park time on transient API/network conditions
   limit_cap: number;            // consecutive limit-waits before BLOCKED
   escalation_workstream: string; // where Rev files loop-blocked tickets
+  respawn_backoff_seconds: number;     // supervisor: first-crash respawn wait, doubles per streak
+  respawn_backoff_cap_seconds: number; // supervisor: backoff ceiling
+  min_uptime_seconds: number;          // supervisor: exits younger than this count as unhealthy
 }
 
 export interface LoopConfig {
@@ -35,5 +38,5 @@ export interface SessionResult {
   outputTail: string; // last lines of session output, for traces and escalations
 }
 
-export const SENTINELS = ['STOP', 'HOLD', 'BLOCKED', 'LIMIT', 'IDLE', 'RUNNING', 'PACE', 'PARKED'] as const;
+export const SENTINELS = ['STOP', 'HOLD', 'BLOCKED', 'LIMIT', 'IDLE', 'RUNNING', 'PACE', 'PARKED', 'BACKOFF'] as const;
 export type Sentinel = (typeof SENTINELS)[number];

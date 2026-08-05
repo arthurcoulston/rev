@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyExit, ladderDecide, rollingMean, velocityToPause } from '../src/ladder.js';
+import { classifyExit, ladderDecide, respawnDecide, rollingMean, velocityToPause } from '../src/ladder.js';
 
 const base = { produced: true, failStreak: 0, limitStreak: 0, failCap: 2, limitCap: 20, limitWait: 900 };
 
@@ -30,6 +30,27 @@ describe('ladderDecide', () => {
     expect(ladderDecide('failure', { ...base, failStreak: 1 }).act).toBe('continue');
     expect(ladderDecide('failure', { ...base, failStreak: 2 }).act).toBe('continue');
     expect(ladderDecide('failure', { ...base, failStreak: 3 }).act).toBe('blocked');
+  });
+});
+
+describe('respawnDecide', () => {
+  const base = { halted: false, exitCode: 0, uptimeSeconds: 300, restartStreak: 0, backoffBase: 30, backoffCap: 900, minUptime: 60 };
+  it('a halt sentinel always wins — never respawn over a decision', () => {
+    expect(respawnDecide({ ...base, halted: true }).act).toBe('await_clearance');
+    expect(respawnDecide({ ...base, halted: true, exitCode: 1, restartStreak: 5 }).act).toBe('await_clearance');
+  });
+  it('clean exit after healthy uptime respawns immediately (the ceiling working)', () => {
+    expect(respawnDecide(base)).toEqual({ act: 'respawn', waitSeconds: 0 });
+  });
+  it('crashes climb an exponential backoff to the cap', () => {
+    expect(respawnDecide({ ...base, exitCode: 1, restartStreak: 1 })).toEqual({ act: 'respawn', waitSeconds: 30 });
+    expect(respawnDecide({ ...base, exitCode: 1, restartStreak: 2 })).toEqual({ act: 'respawn', waitSeconds: 60 });
+    expect(respawnDecide({ ...base, exitCode: 1, restartStreak: 4 })).toEqual({ act: 'respawn', waitSeconds: 240 });
+    expect(respawnDecide({ ...base, exitCode: 1, restartStreak: 10 })).toEqual({ act: 'respawn', waitSeconds: 900 });
+  });
+  it('a signal kill and a too-young clean exit are both unhealthy', () => {
+    expect(respawnDecide({ ...base, exitCode: null, restartStreak: 1 })).toEqual({ act: 'respawn', waitSeconds: 30 });
+    expect(respawnDecide({ ...base, uptimeSeconds: 5, restartStreak: 1 })).toEqual({ act: 'respawn', waitSeconds: 30 });
   });
 });
 

@@ -45,6 +45,31 @@ export function ladderDecide(
   }
 }
 
+// Supervisor respawn policy for a loop-process exit. A halt sentinel means the
+// exit was deliberate (or escalated): never respawn over an operator's or the
+// ladder's decision — poll until it is cleared. A clean exit after a healthy
+// uptime is the iteration ceiling doing its job: fresh process, no penalty.
+// Everything else — crash, signal, or an exit too young to trust — climbs an
+// exponential backoff so a wedged loop cannot spin the machine.
+export type RespawnAction =
+  | { act: 'respawn'; waitSeconds: number }
+  | { act: 'await_clearance' };
+
+export function respawnDecide(opts: {
+  halted: boolean;             // STOP/HOLD/BLOCKED present at exit
+  exitCode: number | null;     // null = killed by signal
+  uptimeSeconds: number;
+  restartStreak: number;       // consecutive unhealthy exits, this one included
+  backoffBase: number;
+  backoffCap: number;
+  minUptime: number;
+}): RespawnAction {
+  if (opts.halted) return { act: 'await_clearance' };
+  if (opts.exitCode === 0 && opts.uptimeSeconds >= opts.minUptime) return { act: 'respawn', waitSeconds: 0 };
+  const wait = Math.min(opts.backoffCap, opts.backoffBase * 2 ** Math.max(0, opts.restartStreak - 1));
+  return { act: 'respawn', waitSeconds: wait };
+}
+
 // Velocity fraction -> inter-iteration pause seconds, using the loop's measured
 // mean iteration duration (or a default before one exists). pace>=1 => no pause.
 export function velocityToPause(pace: number, tAvgSeconds: number, defaultTiter = 180): number {

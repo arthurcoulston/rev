@@ -12,6 +12,9 @@ helmo_mcp_server = "/path/to/helm/dist/server.js"
 # limit_wait_seconds = 900           # park time on transient API/network conditions
 # limit_cap = 20                     # consecutive parks before BLOCKED (~5h default)
 # escalation_workstream = "rev"  # where loop-blocked tickets are filed
+# respawn_backoff_seconds = 30       # supervisor: first-crash respawn wait, doubles per streak
+# respawn_backoff_cap_seconds = 900  # supervisor: backoff ceiling
+# min_uptime_seconds = 60            # supervisor: exits younger than this count as unhealthy
 
 # A worker loop. The name is also its Helm actor identity.
 [loops.example-worker]
