@@ -3,8 +3,8 @@
 Rev keeps agent loops turning: process supervision for autonomous loops
 that draw work from Helmo. Rev never reads ticket content; Helmo never
 manages a process. Product doc: `rev-product-description.md`.
-Renamed from Capstan 2026-08-05 (H-53); Helm records before then carry the
-old name, and closed tickets stay in the `capstan-dev` workstream unrewritten.
+Renamed from Capstan 2026-08-05 (H-53); Helm event history before then carries
+the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 
 ## Architecture (src/)
 
