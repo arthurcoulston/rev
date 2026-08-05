@@ -33,8 +33,8 @@ manages a process. Product doc: `capstan-product-description.md`.
 - `npm run build`, `npm test` (ladder units + e2e with mock runtime).
 - Drive a loop: `node dist/cli.js run <loop> [--count N]` (foreground; detach
   deliberately). `--count 1` is the assess-early lever.
-- Dashboard: `node dist/view.js` (`CAPSTAN_VIEW_PORT`, default 4500) — restart
-  after rebuild.
+- Dashboard: `node dist/view.js` (`CAPSTAN_VIEW_PORT`, default 4500; binds
+  127.0.0.1, `CAPSTAN_VIEW_HOST` to change) — restart after rebuild.
 
 ## Invariants that bite
 

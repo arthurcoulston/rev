@@ -8,6 +8,7 @@ import { capstanHome, loadRoster, stateDir, tokenLogPath } from './config.js';
 import { pidAlive, sGet, sHas } from './sentinels.js';
 
 const port = Number(process.env['CAPSTAN_VIEW_PORT'] ?? 4500);
+const host = process.env['CAPSTAN_VIEW_HOST'] ?? '127.0.0.1';
 const esc = (s: unknown) =>
   String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
 
@@ -87,4 +88,4 @@ createServer((_req, res) => {
   <h1>Capstan <span>the machine, read-only · home ${esc(capstanHome())} · work lives in <a href="http://localhost:4400">Helm</a></span></h1>
   <table><tr><th>Loop</th><th>State</th><th>Workstream</th><th>Runtime</th><th>Pace</th><th>Spend</th><th>Recent trace</th></tr>
   ${rows || '<tr><td colspan="7">No loops in the roster yet.</td></tr>'}</table>`);
-}).listen(port, () => console.log(`Capstan view (read-only): http://localhost:${port} — home: ${capstanHome()}`));
+}).listen(port, host, () => console.log(`Capstan view (read-only): http://localhost:${port} — home: ${capstanHome()}`));

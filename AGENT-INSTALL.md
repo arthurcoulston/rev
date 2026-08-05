@@ -56,7 +56,7 @@ smoke loop from the roster afterwards if the human doesn't want it kept.
 cd ~/tools/capstan && nohup npm run view > /tmp/capstan-view.log 2>&1 &
 ```
 
-Read-only at `http://localhost:4500` (`CAPSTAN_VIEW_PORT` to change). Verify it responds.
+Read-only at `http://localhost:4500`, bound to 127.0.0.1 (`CAPSTAN_VIEW_PORT` / `CAPSTAN_VIEW_HOST` to change). Verify it responds.
 
 ### 6. Report back to the human
 
