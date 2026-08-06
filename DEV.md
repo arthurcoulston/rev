@@ -13,7 +13,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   idle or halt. The iteration prompt ("work ONE ticket to a natural stopping
   point") lives here, and it opens with the workstream's steering when set
   (helm-cli `workstream`: goal + remaining budget, helmo H-55) — disclosure
-  before planning, and a steering fetch failure never stops the loop. After
+  before planning, and a steering fetch failure never stops the loop.
+  `workstream = "*"` makes a loop store-wide (H-92, built for bosun): wake is
+  unscoped but fires on MOTION ONLY (changed_since, never ready_count — the
+  whole store's standing backlog would wake a judge every poll forever), no
+  steering fetch, and the prompt defers to the constitution instead of naming
+  a stream or the ONE-ticket rule. After
   each iteration it writes the session's metered spend back to the
   most-touched ticket via helm-cli `record-spend` (H-19) — as the rev
   actor, since Rev is the meter, not the spender — net of anything the agent

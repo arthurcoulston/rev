@@ -34,9 +34,16 @@ export function revActor(): object {
   return { name: 'rev', kind: 'agent', model: 'rev-harness', version: '0.1.0' };
 }
 
+/** Human-readable scope for logs and escalations: '*' loops watch the whole store. */
+export function scopeLabel(l: LoopConfig): string {
+  return l.workstream === '*' ? 'all workstreams' : `workstream '${l.workstream}'`;
+}
+
 export function wakeCheck(g: GlobalConfig, l: LoopConfig, sinceSeq: number): WakeCheck {
+  // workstream '*' (store-wide loops, H-92): no scope filter — any event wakes.
+  const scope = l.workstream === '*' ? [] : ['--workstream', l.workstream];
   return run(g, [
-    'wake-check', '--workstream', l.workstream, '--assignee', l.name, '--since-seq', String(sinceSeq),
+    'wake-check', ...scope, '--assignee', l.name, '--since-seq', String(sinceSeq),
   ]) as WakeCheck;
 }
 
@@ -82,7 +89,7 @@ export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, 
       'create',
       '--title', `Loop '${l.name}' is blocked: needs a decision`,
       '--body',
-      `Rev halted loop '${l.name}' (workstream ${l.workstream}). Reason: ${reason}.\n\nState dir: ${stateDir} (events.log has the trace; console tail below).\nTo resume after fixing: remove the BLOCKED sentinel and run \`rev run ${l.name}\`.\n\nLast session output:\n${outputTail.slice(-1500)}`,
+      `Rev halted loop '${l.name}' (${scopeLabel(l)}). Reason: ${reason}.\n\nState dir: ${stateDir} (events.log has the trace; console tail below).\nTo resume after fixing: remove the BLOCKED sentinel and run \`rev run ${l.name}\`.\n\nLast session output:\n${outputTail.slice(-1500)}`,
       '--workstream', g.escalation_workstream,
       '--type', 'ops',
       '--priority', '1',
@@ -94,7 +101,7 @@ export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, 
     [
       'return',
       '--ticket', created.id,
-      '--situation', `Loop '${l.name}' halted itself: ${reason}. The loop stays down until a human decides; no work in workstream '${l.workstream}' is being drawn.`,
+      '--situation', `Loop '${l.name}' halted itself: ${reason}. The loop stays down until a human decides; no work in ${scopeLabel(l)} is being drawn.`,
       '--question', `How should loop '${l.name}' proceed?`,
       '--options', JSON.stringify([
         { label: 'resume', consequence: 'clear BLOCKED and restart the loop as-is (right if the cause was external and has passed)' },
@@ -102,7 +109,7 @@ export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, 
         { label: 'investigate', consequence: 'a human or agent digs into the trace before any restart' },
       ]),
       '--recommendation', reason.includes('transient') ? 'resume — the condition was external and has likely lifted' : 'investigate — consecutive failures usually mean something real',
-      '--if-unanswered', `workstream '${l.workstream}' has no worker until this is answered`,
+      '--if-unanswered', `${scopeLabel(l)} has no '${l.name}' worker until this is answered`,
     ],
     revActor(),
   );

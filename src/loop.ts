@@ -2,7 +2,7 @@
 // the outcome through the ladder, idle or halt. v0 runs one loop in the
 // foreground; the multi-loop supervisor is the next milestone.
 import { stateDir } from './config.js';
-import { actorActivity, actorSelfSpend, actorTickets, escalateBlocked, recordSpend, wakeCheck, workstreamInfo } from './helm.js';
+import { actorActivity, actorSelfSpend, actorTickets, escalateBlocked, recordSpend, scopeLabel, wakeCheck, workstreamInfo } from './helm.js';
 import { ladderDecide, rollingMean, velocityToPause } from './ladder.js';
 import { logEvent, pidAlive, sClear, sGet, sHas, sSet, streak, streakReset } from './sentinels.js';
 import { runSession } from './shim.js';
@@ -28,7 +28,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   process.on('SIGINT', () => process.exit(130));
   process.on('SIGTERM', () => process.exit(143));
 
-  console.log(`rev: loop '${l.name}' | workstream ${l.workstream} | ${l.runtime}/${l.model} | cwd ${l.cwd}`);
+  console.log(`rev: loop '${l.name}' | ${scopeLabel(l)} | ${l.runtime}/${l.model} | cwd ${l.cwd}`);
   console.log(`rev: state ${dir} — stop it with: rev stop ${l.name}`);
   logEvent(l.name, 'loop-start', `pid=${process.pid} count=${opts.count ?? 0}`);
 
@@ -66,7 +66,11 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     if (idle !== null) {
       const since = parseInt(idle, 10) || 0;
       const w = wakeCheck(g, l, since);
-      if (w.ready_count > 0 || w.changed_since) {
+      // Store-wide loops ('*', H-92) wake on motion only: their job is judging
+      // fresh activity, and standing ready backlog anywhere in the store would
+      // otherwise wake them every poll, forever.
+      const wake = l.workstream === '*' ? w.changed_since : w.ready_count > 0 || w.changed_since;
+      if (wake) {
         sClear(l.name, 'IDLE');
         logEvent(l.name, 'wake', `since=${since} ready=${w.ready_count}`);
       } else {
@@ -83,18 +87,22 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
 
     // Steering disclosure up front (helmo H-55): a budget known before
     // planning changes what gets worked first; discovered at the end, it is
-    // only a verdict.
-    const ws = workstreamInfo(g, l.workstream);
+    // only a verdict. Store-wide loops have no single stream to steer by.
+    const ws = l.workstream === '*' ? null : workstreamInfo(g, l.workstream);
     const steering =
       (ws?.goal ? `The workstream's goal — what done means for the whole stream: ${ws.goal}. If the goal is already met, closing out is the right move; do not manufacture polish. ` : '') +
       (ws?.budget_usd
         ? `Budget: $${ws.spent_usd.toFixed(2)} of $${ws.budget_usd.toFixed(2)} spent, $${(ws.remaining_usd ?? 0).toFixed(2)} remains. The budget is the plan — take the highest-value work first; if it is exhausted, close out honestly with residuals documented rather than starting more. `
         : '');
+    const draw =
+      l.workstream === '*'
+        ? `Use your Helmo tools: first list tickets assigned to you, then survey fresh activity and unclaimed filings across all workstreams — your constitution says what your work is. Work to a natural stopping point, `
+        : `Use your Helm tools: first list tickets assigned to you, then ready work in workstream '${l.workstream}'. Work ONE ticket to a natural stopping point, `;
     const prompt =
       `Loop iteration ${i} for agent '${l.name}'. Working directory: ${l.cwd}. ` +
-      `Use your Helm tools: first list tickets assigned to you, then ready work in workstream '${l.workstream}'. ` +
       steering +
-      `Work ONE ticket to a natural stopping point, record progress honestly, then end the session. ${l.prompt ?? ''}`;
+      draw +
+      `record progress honestly, then end the session. ${l.prompt ?? ''}`;
     const res = runSession(g, l, prompt);
 
     const durSec = Math.round((Date.now() - started) / 1000);

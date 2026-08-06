@@ -133,6 +133,55 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
     expect(out).toContain('$0.00 of $50.00 spent');
   });
 
+  it("store-wide loop ('*', H-92) draws work from any workstream under the wildcard prompt", () => {
+    const e = setup(`[loops.judge]
+workstream = "*"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+set -e
+echo "PROMPT:$REV_PROMPT"
+ID=$(node ${HELM_CLI} list --ready --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -n "$ID" ]; then
+  node ${HELM_CLI} update --ticket $ID --note "judged by mock" --status in_progress
+  node ${HELM_CLI} update --ticket $ID --note "disposed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
+fi
+'''
+`);
+    // Work lives in a workstream no loop is scoped to: only a '*' loop sees it.
+    const id = (helm(e, ['create', '--title', 'Filed far away', '--body', 'x', '--workstream', 'elsewhere', '--type', 'ops']) as { id: string }).id;
+    const out = rev(e, ['run', 'judge', '--count', '2']);
+    expect(out).toContain('across all workstreams'); // the wildcard prompt, not a stream's
+    expect((helm(e, ['get', id]) as { status: string }).status).toBe('done');
+    expect(existsSync(join(e.home, 'state', 'judge', 'IDLE'))).toBe(true);
+  });
+
+  it("store-wide loop ('*', H-92) wakes on motion only — standing backlog never wakes it", () => {
+    // Echo-only mock: never claims, so ready backlog stays standing when the
+    // loop idles. A scoped loop would wake on ready_count>0 every poll; the
+    // whole store's backlog would do that to a '*' loop forever.
+    const e = setup(`[loops.judge]
+workstream = "*"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
+`);
+    helm(e, ['create', '--title', 'Standing backlog', '--body', 'x', '--workstream', 'elsewhere', '--type', 'ops']);
+    rev(e, ['run', 'judge', '--count', '1']); // one no-production iteration -> IDLE at cursor, backlog still ready
+    expect(existsSync(join(e.home, 'state', 'judge', 'IDLE'))).toBe(true);
+    const eventsBefore = readFileSync(join(e.home, 'state', 'judge', 'events.log'), 'utf8');
+    try {
+      execFileSync('npx', ['tsx', REV_CLI, 'run', 'judge', '--count', '1'], {
+        env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..'), timeout: 4000,
+      });
+      expect.unreachable('a motion-less start must stay idle until killed');
+    } catch {
+      /* killed while idling: expected */
+    }
+    const eventsAfter = readFileSync(join(e.home, 'state', 'judge', 'events.log'), 'utf8');
+    expect(eventsAfter.slice(eventsBefore.length)).not.toMatch(/wake/);
+  });
+
   it('repeated failure hits the cap, sets BLOCKED, and escalates into the Helm queue', () => {
     const e = setup(`[loops.bad-loop]
 workstream = "rev-test"
