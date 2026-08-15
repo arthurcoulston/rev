@@ -219,4 +219,45 @@ constitution = "constitutions/missing.md"
     expect(out).toContain('BLOCKED');
     expect(readFileSync(join(e.home, 'state', 'app-loop', 'BLOCKED'), 'utf8')).toContain('apparatus');
   });
+
+  it('survives a wake-check failure instead of dying with it (H-134)', () => {
+    // A locked store used to kill the loop process outright: helm-cli threw,
+    // nothing caught it, and the supervisor found a corpse. A failed poll is
+    // transient — the loop must log it and try again on the next one.
+    const e = setup(`[loops.flaky-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+echo "rev-mock-usage tokens=10 cost_usd=0.01"
+'''
+`);
+    seedTicket(e, 'Work behind a briefly locked store');
+
+    // A helm-cli stand-in that fails its first call the way a locked store
+    // does, then delegates every later call to the real one.
+    const shim = join(e.home, 'flaky-helm.cjs');
+    const counter = join(e.home, 'calls');
+    writeFileSync(
+      shim,
+      `const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+const n = fs.existsSync(${JSON.stringify(counter)}) ? parseInt(fs.readFileSync(${JSON.stringify(counter)}, 'utf8'), 10) : 0;
+fs.writeFileSync(${JSON.stringify(counter)}, String(n + 1));
+if (n === 0) { process.stderr.write('{"error":"SqliteError: database is locked"}\\n'); process.exit(1); }
+process.stdout.write(execFileSync('node', [${JSON.stringify(HELM_CLI)}, ...process.argv.slice(2)], { encoding: 'utf8' }));
+`,
+    );
+    writeFileSync(
+      join(e.home, 'roster.toml'),
+      readFileSync(join(e.home, 'roster.toml'), 'utf8').replace(HELM_CLI, shim),
+    );
+
+    const out = rev(e, ['run', 'flaky-loop', '--count', '1']);
+
+    const events = readFileSync(join(e.home, 'state', 'flaky-loop', 'events.log'), 'utf8');
+    expect(events).toMatch(/wake-check-failed/); // the failure was recorded, not swallowed
+    expect(out).toContain('run 1 started'); // and the loop went on to work
+    expect(events).toMatch(/run-end/);
+  });
 });

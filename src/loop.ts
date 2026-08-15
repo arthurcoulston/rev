@@ -2,13 +2,28 @@
 // the outcome through the ladder, idle or halt. v0 runs one loop in the
 // foreground; the multi-loop supervisor is the next milestone.
 import { stateDir } from './config.js';
-import { actorActivity, actorSelfSpend, actorTickets, escalateBlocked, recordSpend, scopeLabel, wakeCheck, workstreamInfo } from './helm.js';
+import { WakeCheck, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, recordSpend, scopeLabel, wakeCheck, workstreamInfo } from './helm.js';
 import { ladderDecide, rollingMean, velocityToPause } from './ladder.js';
 import { logEvent, pidAlive, sClear, sGet, sHas, sSet, streak, streakReset } from './sentinels.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 
 const sleep = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
+
+/** Helm is reachable across a subprocess boundary, so a poll can fail for
+ *  reasons that have nothing to do with the work: a locked store, a moment's
+ *  contention. That is a transient condition — the state rev already models —
+ *  never grounds to kill the loop, which is what an uncaught throw here used to
+ *  do (H-134). Failure reads as "no news": the next poll decides. */
+function tryWakeCheck(g: GlobalConfig, l: LoopConfig, sinceSeq: number): WakeCheck | null {
+  try {
+    return wakeCheck(g, l, sinceSeq);
+  } catch (e) {
+    logEvent(l.name, 'wake-check-failed', String(e).slice(0, 200));
+    console.error(`rev: wake-check failed for '${l.name}' — retrying next poll. ${String(e).slice(0, 200)}`);
+    return null;
+  }
+}
 
 export interface RunOptions {
   count?: number; // bounded run for troubleshooting; 0/undefined = unbounded to the ceiling
@@ -65,7 +80,11 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     const idle = sGet(l.name, 'IDLE');
     if (idle !== null) {
       const since = parseInt(idle, 10) || 0;
-      const w = wakeCheck(g, l, since);
+      const w = tryWakeCheck(g, l, since);
+      if (!w) {
+        await sleep(g.poll_seconds);
+        continue;
+      }
       // Store-wide loops ('*', H-92) wake on motion only: their job is judging
       // fresh activity, and standing ready backlog anywhere in the store would
       // otherwise wake them every poll, forever.
@@ -79,8 +98,12 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       }
     }
 
+    const before = tryWakeCheck(g, l, 0);
+    if (!before) {
+      await sleep(g.poll_seconds);
+      continue;
+    }
     i += 1;
-    const before = wakeCheck(g, l, 0);
     const started = Date.now();
     logEvent(l.name, 'run-start', `iter=${i} seq=${before.max_seq}`);
     console.log(`=== ${l.name} run ${i} started ${new Date().toISOString()} ===`);
@@ -181,9 +204,13 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       }
       case 'idle': {
         streakReset(l.name, 'fail', 'limit');
-        const after = wakeCheck(g, l, 0);
-        sSet(l.name, 'IDLE', String(after.max_seq));
-        console.log(`rev: no production this iteration — IDLE at seq ${after.max_seq}.`);
+        // If the cursor read fails, idle at the seq we entered on rather than
+        // guessing forward: too low costs one redundant wake, too high skips
+        // motion silently.
+        const after = tryWakeCheck(g, l, 0);
+        const cursor = after?.max_seq ?? before.max_seq;
+        sSet(l.name, 'IDLE', String(cursor));
+        console.log(`rev: no production this iteration — IDLE at seq ${cursor}.`);
         break;
       }
       case 'continue':
