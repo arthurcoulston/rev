@@ -71,6 +71,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   picked up within one poll.
 - Escalations must land as Helmo tickets, never only in logs; a BLOCKED loop
   that couldn't escalate prints loudly and relies on the dashboard.
+- A store-wide loop (`workstream = '*'`) wakes on motion only, and its
+  wake-check must carry NO scope at all — assignee included. Helm ORs the
+  scope clauses, so any one of them narrows the whole store back down to
+  tickets already assigned and silences the fresh-filing signal these loops
+  exist for. Cost us bosun's entire wake path until H-138.
 
 ## Neighbors
 

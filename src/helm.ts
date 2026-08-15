@@ -41,10 +41,12 @@ export function scopeLabel(l: LoopConfig): string {
 
 export function wakeCheck(g: GlobalConfig, l: LoopConfig, sinceSeq: number): WakeCheck {
   // workstream '*' (store-wide loops, H-92): no scope filter — any event wakes.
-  const scope = l.workstream === '*' ? [] : ['--workstream', l.workstream];
-  return run(g, [
-    'wake-check', ...scope, '--assignee', l.name, '--since-seq', String(sinceSeq),
-  ]) as WakeCheck;
+  // The assignee must drop with it: Helm ORs the scope clauses, so keeping it
+  // narrows the whole store back down to tickets already assigned, and fresh
+  // filings — the wake signal these loops exist for — never land (H-138).
+  const scope =
+    l.workstream === '*' ? [] : ['--workstream', l.workstream, '--assignee', l.name];
+  return run(g, ['wake-check', ...scope, '--since-seq', String(sinceSeq)]) as WakeCheck;
 }
 
 // Steering disclosure (helmo H-55): the goal and remaining budget go into
