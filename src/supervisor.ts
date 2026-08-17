@@ -11,7 +11,7 @@ import { closeSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir } from './config.js';
 import { respawnDecide } from './ladder.js';
-import { logEvent, pidAlive, sClear, sHas, sSet } from './sentinels.js';
+import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet } from './sentinels.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 
 const SUP = 'supervisor';
@@ -34,7 +34,14 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
   if (existing) {
     throw new Error(`A supervisor is already running (PID ${existing}). Check: rev status`);
   }
-  sSet(SUP, 'RUNNING', `${process.pid}\nstarted ${new Date().toISOString()}\n`);
+  if (sHas(SUP, 'RUNNING')) {
+    // A previous supervisor died without cleanup (crash, power loss). Say so:
+    // this line is the diagnosis H-154 spent a night without.
+    const stale = sGet(SUP, 'RUNNING')?.split('\n')[0] ?? '?';
+    logEvent(SUP, 'stale-marker', `pid=${stale} cleared`);
+    console.log(`rev: previous supervisor (pid ${stale}) left a stale marker — clearing it and starting.`);
+  }
+  sSet(SUP, 'RUNNING', runningStamp());
   process.on('exit', () => sClear(SUP, 'RUNNING'));
 
   const slots = new Map<string, Slot>();

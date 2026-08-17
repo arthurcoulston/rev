@@ -4,7 +4,7 @@
 import { stateDir } from './config.js';
 import { WakeCheck, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, recordSpend, scopeLabel, wakeCheck, workstreamInfo } from './helm.js';
 import { ladderDecide, rollingMean, velocityToPause } from './ladder.js';
-import { logEvent, pidAlive, sClear, sGet, sHas, sSet, streak, streakReset } from './sentinels.js';
+import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streak, streakReset } from './sentinels.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 
@@ -36,7 +36,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   if (existing) {
     throw new Error(`A '${l.name}' loop is already running (PID ${existing}). Check: rev status`);
   }
-  sSet(l.name, 'RUNNING', `${process.pid}\nstarted ${new Date().toISOString()}\n`);
+  sSet(l.name, 'RUNNING', runningStamp());
   if (!sHas(l.name, 'PACE') && l.pace < 1) sSet(l.name, 'PACE', String(l.pace));
   const cleanup = () => sClear(l.name, 'RUNNING', 'PARKED', 'LIMIT');
   process.on('exit', cleanup);

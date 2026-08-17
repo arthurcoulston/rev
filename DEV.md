@@ -71,6 +71,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   picked up within one poll.
 - Escalations must land as Helmo tickets, never only in logs; a BLOCKED loop
   that couldn't escalate prints loudly and relies on the dashboard.
+- Liveness is identity, never a bare pid. A RUNNING marker records the command
+  that owns it (`runningStamp()` — use it anywhere RUNNING is written), and
+  `pidAlive` requires the live process to still be running that command. Pids
+  are recycled across a reboot: a stale marker whose number had been reused by
+  an unrelated process made the supervisor abort as "already running" through
+  57 launchd retries, with the whole fleet down and unable to converge (H-154).
 - A store-wide loop (`workstream = '*'`) wakes on motion only, and its
   wake-check must carry NO scope at all — assignee included. Helm ORs the
   scope clauses, so any one of them narrows the whole store back down to

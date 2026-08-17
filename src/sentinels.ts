@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, rmSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir } from './config.js';
@@ -61,15 +62,51 @@ export function logEvent(loop: string, event: string, fields = ''): void {
   }
 }
 
+// A pid does not identify a process. Pids are recycled, and after a reboot a
+// dead marker's pid routinely belongs to something unrelated — which took the
+// whole fleet down for a night: an Apple helper landed on the old supervisor's
+// number, so every launchd restart aborted with "a supervisor is already
+// running" (57 times, with nothing running at all) and the machine could never
+// converge on its own (H-154). So RUNNING records the command that owns it,
+// and liveness means: that pid exists AND is still running that command.
+export function runningStamp(): string {
+  return `${process.pid}\nstarted ${new Date().toISOString()}\ncmd ${ownCommand()}\n`;
+}
+
+// Our own driver invocation, minus the node binary — 'dist/cli.js run ward'.
+function ownCommand(): string {
+  return [process.argv[1] ?? '', ...process.argv.slice(2)].join(' ').trim();
+}
+
+// -ww so a long invocation is never truncated into a false mismatch. An empty
+// answer (no such process, or no ps at all) reads as "not provably ours": the
+// bias is deliberate, because a false 'alive' wedges the machine permanently
+// while a false 'dead' is caught by the next start writing a fresh marker.
+function liveCommand(pid: number): string {
+  try {
+    return execFileSync('ps', ['-ww', '-p', String(pid), '-o', 'command='], { encoding: 'utf8' }).trim();
+  } catch {
+    return '';
+  }
+}
+
 export function pidAlive(loop: string): number | null {
   const running = sGet(loop, 'RUNNING');
   if (!running) return null;
-  const pid = parseInt(running.split('\n')[0] ?? '', 10);
+  const lines = running.split('\n');
+  const pid = parseInt(lines[0] ?? '', 10);
   if (!pid) return null;
   try {
-    process.kill(pid, 0);
-    return pid;
+    process.kill(pid, 0); // gone, or not ours to signal: settled, no ps needed
   } catch {
     return null;
   }
+  const cmd = lines.find((l) => l.startsWith('cmd '))?.slice(4).trim();
+  // A marker predating this format can only be trusted by pid, as before; the
+  // next start of that process writes one carrying its command.
+  if (!cmd) return pid;
+  const live = liveCommand(pid);
+  // Anchored at the end so the supervisor's 'cli.js run' cannot match a loop's
+  // 'cli.js run ward' if its pid is recycled to one.
+  return live === cmd || live.endsWith(` ${cmd}`) ? pid : null;
 }
