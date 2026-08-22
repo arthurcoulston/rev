@@ -23,7 +23,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   most-touched ticket via helm-cli `record-spend` (H-19) — as the rev
   actor, since Rev is the meter, not the spender — net of anything the agent
   self-reported in the window (`actor-spend`, H-57): a session lands in the
-  totals exactly once, and a negative delta is reconciliation, not refund.
+  totals exactly once. Each guess is cancelled on the ticket that carries it
+  and the meter lands on the primary alone (H-187) — a session-wide
+  correction once left a ticket at −62k beside a neighbour's +80k guess.
 - `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent
   CLAUDE/ANTHROPIC env — the auth-leak fix; don't weaken it), per-session token
