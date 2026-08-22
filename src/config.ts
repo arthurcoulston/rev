@@ -61,6 +61,7 @@ export function loadRoster(): Roster {
       pace: Number(l['pace'] ?? 1),
       prompt: l['prompt'] ? String(l['prompt']) : undefined,
       mcp_extra: l['mcp_extra'] ? resolveHome(String(l['mcp_extra'])) : undefined,
+      skills: Array.isArray(l['skills']) ? (l['skills'] as unknown[]).map((s) => resolveHome(String(s))) : undefined,
       mock_cmd: l['mock_cmd'] ? String(l['mock_cmd']) : undefined,
     };
   }

@@ -29,6 +29,9 @@ export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: stri
     if (!l.constitution || !existsSync(l.constitution) || statSync(l.constitution).size === 0) {
       return { rc: 78, cls: 'apparatus', outputTail: `constitution missing or empty: ${l.constitution}` };
     }
+    for (const s of l.skills ?? []) {
+      if (!existsSync(s) || statSync(s).size === 0) return { rc: 78, cls: 'apparatus', outputTail: `skill missing or empty: ${s}` };
+    }
   }
   switch (l.runtime) {
     case 'claude':
@@ -70,16 +73,30 @@ function logTokens(l: LoopConfig, tokens?: number, cost?: number): void {
   }
 }
 
+// The system prompt a session carries: the constitution, then each roster
+// skill whole (H-247) — a loop that touches Drive carries file-stewardship
+// the way a desk session loads it. One file because the CLI takes one path.
+export function systemPrompt(l: LoopConfig): string {
+  const parts = [readFileSync(l.constitution, 'utf8')];
+  for (const s of l.skills ?? []) parts.push(`\n\n--- Skill: ${s} ---\n\n${readFileSync(s, 'utf8')}`);
+  return parts.join('');
+}
+
 function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string): SessionResult {
   const scratch = mkdtempSync(join(tmpdir(), 'rev-'));
   try {
     const mcpConfig = writeMcpConfig(g, l, scratch);
+    let systemFile = l.constitution;
+    if (l.skills?.length) {
+      systemFile = join(scratch, 'system.md');
+      writeFileSync(systemFile, systemPrompt(l));
+    }
     const res = spawnSync(
       'claude',
       [
         '-p', prompt,
         '--model', l.model,
-        '--append-system-prompt-file', l.constitution,
+        '--append-system-prompt-file', systemFile,
         '--strict-mcp-config', '--mcp-config', mcpConfig,
         '--dangerously-skip-permissions',
         '--output-format', 'json',
@@ -129,7 +146,7 @@ function runCodex(_g: GlobalConfig, l: LoopConfig, prompt: string): SessionResul
     [
       'exec', '--ephemeral', '--ignore-user-config', '--dangerously-bypass-approvals-and-sandbox',
       '--output-last-message', lastMsg, '--model', l.model,
-      `${readFileSync(l.constitution, 'utf8')}\n\n--- Iteration prompt ---\n\n${prompt}`,
+      `${systemPrompt(l)}\n\n--- Iteration prompt ---\n\n${prompt}`,
     ],
     { cwd: l.cwd, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], maxBuffer: 32 * 1024 * 1024, env: cleanEnv() },
   );

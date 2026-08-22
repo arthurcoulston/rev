@@ -24,6 +24,7 @@ export interface LoopConfig {
   pace: number;            // velocity fraction (0,1]
   prompt?: string;         // iteration prompt tail
   mcp_extra?: string;      // optional path to JSON with additional MCP servers
+  skills?: string[];       // crew skill files appended to the constitution at spawn (H-247)
   mock_cmd?: string;       // mock runtime only: shell command to run per iteration
 }
 

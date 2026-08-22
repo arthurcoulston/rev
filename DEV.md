@@ -44,7 +44,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 - `service.ts` — reboot resilience: launchd plist (KeepAlive on crash only —
   a drain exits 0 and stays down) / systemd user unit. Units embed
   install-time PATH and REV_HOME because service managers strip env.
-- `sentinels.ts` / `config.ts` — sentinel files + roster loading. Instance data
+- `sentinels.ts` / `config.ts` — sentinel files + roster loading. A loop's
+  optional `skills = [...]` (paths) are appended whole to its constitution at
+  spawn — how a Drive-touching loop carries crew `skills/file-stewardship.md`
+  (H-247); a missing skill fails the session closed like a missing constitution. Instance data
   lives in `~/.rev/` (roster.toml, mcp/, state/<loop>/, token-log), NEVER
   in this repo — publishability is structural.
 - `view.ts` — read-only machine dashboard at :4500. `cli.ts` — run / status /
