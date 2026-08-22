@@ -69,8 +69,16 @@ export function actorTickets(g: GlobalConfig, name: string, sinceSeq: number): {
   return (run(g, ['actor-tickets', '--name', name, '--since-seq', String(sinceSeq)]) as { tickets: { id: string; events: number }[] }).tickets;
 }
 
-export function actorSelfSpend(g: GlobalConfig, name: string, sinceSeq: number): { tokens: number; cost_usd: number } {
-  return run(g, ['actor-spend', '--name', name, '--since-seq', String(sinceSeq)]) as { tokens: number; cost_usd: number };
+export interface SelfSpend {
+  tokens: number;
+  cost_usd: number;
+  /** The same figures split by the ticket that carries each guess (H-187). */
+  by_ticket: { id: string; tokens: number; cost_usd: number }[];
+}
+
+export function actorSelfSpend(g: GlobalConfig, name: string, sinceSeq: number): SelfSpend {
+  const r = run(g, ['actor-spend', '--name', name, '--since-seq', String(sinceSeq)]) as SelfSpend;
+  return { ...r, by_ticket: r.by_ticket ?? [] };
 }
 
 // Spend is written by Rev (the meter), not the loop's agent — the agent

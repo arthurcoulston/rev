@@ -115,6 +115,39 @@ fi
     expect(events).toMatch(new RegExp(`spend\\s+iter=1 ticket=${id} tokens=-3800 cost=-4\\.75`));
   });
 
+  it('cancels a self-report on the ticket that carries it, not on the ticket the session is charged to (H-187)', () => {
+    // The mock works ticket A but guesses its usage onto side ticket B. A must
+    // end at the meter; B must end at zero — never the old −(guess − meter).
+    const e = setup(`[loops.side-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+set -e
+IDS=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 2 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets.map(t=>t.id).join(' '))})")
+A=$(echo $IDS | cut -d' ' -f1); B=$(echo $IDS | cut -d' ' -f2)
+if [ -n "$A" ]; then
+  node ${HELM_CLI} update --ticket $A --note "claimed by mock" --status in_progress
+  node ${HELM_CLI} update --ticket $B --note "guessing my spend on the side ticket" --tokens 80000
+  node ${HELM_CLI} update --ticket $A --note "completed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
+  echo "rev-mock-usage tokens=17696 cost_usd=3.23"
+fi
+'''
+`);
+    const a = seedTicket(e, 'Main work');
+    const b = seedTicket(e, 'Side ticket that gets the guess');
+    rev(e, ['run', 'side-loop', '--count', '1']);
+    const ta = helm(e, ['get', a]) as { tokens_total: number; cost_usd_total: number };
+    const tb = helm(e, ['get', b]) as { tokens_total: number; cost_usd_total: number };
+    expect(ta.tokens_total).toBe(17696);
+    expect(ta.cost_usd_total).toBeCloseTo(3.23);
+    expect(tb.tokens_total).toBe(0);
+    expect(tb.cost_usd_total).toBe(0);
+    const events = readFileSync(join(e.home, 'state', 'side-loop', 'events.log'), 'utf8');
+    expect(events).toMatch(new RegExp(`spend\\s+iter=1 ticket=${a} tokens=17696 cost=3\\.23`));
+    expect(events).toMatch(new RegExp(`spend\\s+iter=1 ticket=${b} tokens=-80000 cost=0`));
+  });
+
   it('workstream steering (goal + budget) lands in the iteration prompt', () => {
     const e = setup(`[loops.steer-loop]
 workstream = "rev-test"

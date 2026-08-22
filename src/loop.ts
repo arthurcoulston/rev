@@ -157,19 +157,31 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           const [primary, ...rest] = touched;
           // Net out anything the agent self-reported this session: the meter
           // is authoritative, and a session must land in the totals exactly
-          // once (H-57). A negative delta is reconciliation, not refund.
+          // once (H-57). Each guess is cancelled on the ticket that carries it
+          // — a session-wide correction on the primary once left it at −62k
+          // while a side ticket kept the +80k guess (H-187).
           const self = actorSelfSpend(g, l.name, before.max_seq);
-          const tokens = (res.tokens ?? 0) - self.tokens;
-          const cost = (res.cost_usd ?? 0) - self.cost_usd;
+          const guess = new Map(self.by_ticket.map((t) => [t.id, t]));
+          const primaryGuess = guess.get(primary!.id);
+          const tokens = (res.tokens ?? 0) - (primaryGuess?.tokens ?? 0);
+          const cost = (res.cost_usd ?? 0) - (primaryGuess?.cost_usd ?? 0);
           if (tokens || cost) {
             const note =
               `Metered by Rev: loop '${l.name}' iteration ${i} (${l.runtime}/${l.model}), whole session charged to this ticket` +
               (rest.length ? `; session also touched ${rest.map((t) => t.id).join(', ')}` : '') +
-              (self.tokens || self.cost_usd
-                ? `; net of ${self.tokens} tokens / $${self.cost_usd.toFixed(2)} the agent self-reported (the meter is authoritative)`
+              (primaryGuess
+                ? `; net of ${primaryGuess.tokens} tokens / $${primaryGuess.cost_usd.toFixed(2)} the agent self-reported here (the meter is authoritative)`
                 : '') + '.';
             recordSpend(g, primary!.id, tokens, cost, note);
             logEvent(l.name, 'spend', `iter=${i} ticket=${primary!.id} tokens=${tokens} cost=${cost}`);
+          }
+          for (const t of self.by_ticket) {
+            if (t.id === primary!.id) continue;
+            recordSpend(
+              g, t.id, -t.tokens, -t.cost_usd,
+              `Reconciled by Rev: loop '${l.name}' iteration ${i} self-reported ${t.tokens} tokens / $${t.cost_usd.toFixed(2)} here; cancelled — the metered session is charged to ${primary!.id}.`,
+            );
+            logEvent(l.name, 'spend', `iter=${i} ticket=${t.id} tokens=${-t.tokens} cost=${-t.cost_usd}`);
           }
         }
       } catch (e) {
