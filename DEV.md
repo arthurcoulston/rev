@@ -35,6 +35,13 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   weekly cap belongs to, which is the only way the Fable cap is legible rather
   than an opaque codename. Every failure is soft — keep the last numbers, mark
   stale, back off; nothing in rev may wait on a usage bar.
+- `health.ts` — fleet-down detection (H-448). A failing wake-check is modelled
+  as "no news, try next poll", which is right for contention and wrong for
+  anything permanent; past `wedge_cap` consecutive failures the loop is marked
+  WEDGED and an alarm is raised. **The alarm cannot go through Helmo** — Helmo
+  is what a wedged loop cannot reach — so it leaves by another door
+  (`osascript` notification on darwin, best-effort, never fatal). Raised once
+  per episode; the sentinel clears the moment a wake-check succeeds.
 - `burn.ts` — reads the token-log back as a per-loop rolling window (hour and
   day) for the breaker. A file scan, not an in-memory total, because the two
   burns it exists for both spanned process restarts; the window is floored at
@@ -103,6 +110,18 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   via `ps`. `usage.json` holds PARSED values only: agents read that file into
   prompts, so no raw upstream text may pass through, and an error line carries
   our own words plus a status code, never a response body.
+- **A cap that resets beyond the horizon is a decision, not a retry** (H-402).
+  `limitDecide` reads the usage snapshot on any transient condition: if a bar
+  is at/over `limit_exhausted_percent` the wait runs to its actual `resets_at`,
+  and if that is further out than `limit_block_horizon_seconds` the loop blocks
+  immediately with the cap NAMED. Unidentifiable conditions keep the old
+  twenty-attempt ladder. The shim no longer reduces a 429 to `API 429` — the
+  response body is what distinguishes an exhausted quota from a rate limit, and
+  discarding it is what made 2026-08-26 opaque for 34-42 hours.
+- **WEDGED is not a halt.** `halted()` deliberately does not include it: the
+  fault is outside the loop and may clear, so it keeps polling. It sorts above
+  RUNNING/IDLE in the status label because a wedged loop looks busy from the
+  outside while drawing no work at all.
 - **The burn breaker is a ceiling, not a pacer** (H-412). It checks only
   `continue` iterations — every other ladder action is already stopping — and
   trips to BLOCKED with the usual escalation, so a runaway reaches Arthur's

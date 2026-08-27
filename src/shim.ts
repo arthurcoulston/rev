@@ -116,7 +116,17 @@ function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string): SessionResul
       // Transient-API detection: a 429 (usage window exhausted) or 529
       // (overloaded) is a park-and-retry condition, never a failure.
       if (j.api_error_status === 429 || j.api_error_status === 529) {
-        return { rc: 75, cls: 'transient', outputTail: `API ${j.api_error_status}` };
+        // Keep what the response said. Reducing this to "API 429" threw away
+        // the one thing that distinguishes a rate limit from an exhausted
+        // quota — and which quota, and when it resets. On 2026-08-26 that gap
+        // cost three loops 34-42 hours of silence (H-402).
+        const message = String(j.result ?? '').slice(0, 2000);
+        return {
+          rc: 75,
+          cls: 'transient',
+          limit: { status: j.api_error_status, message },
+          outputTail: `API ${j.api_error_status}${message ? `: ${message}` : ''}`,
+        };
       }
       tokens = (j.usage?.input_tokens ?? 0) + (j.usage?.output_tokens ?? 0);
       cost = j.total_cost_usd;

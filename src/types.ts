@@ -15,6 +15,9 @@ export interface GlobalConfig {
   burn_usd_per_day: number;    // breaker: same over 24h; 0 disables
   continue_cap: number;        // breaker: consecutive iterations without idling; 0 disables
   usage_poll_seconds: number;  // Max-plan usage poll interval; 0 disables (H-278)
+  limit_block_horizon_seconds: number;  // a cap resetting further out than this blocks for a human rather than waiting (H-402)
+  limit_exhausted_percent: number;      // a usage bar at or above this counts as the cap that stopped us
+  wedge_cap: number;                    // consecutive wake-check failures before a loop is declared wedged; 0 disables (H-448)
 }
 
 export interface LoopConfig {
@@ -41,10 +44,11 @@ export type ExitClass = 'ok' | 'transient' | 'apparatus' | 'failure';
 export interface SessionResult {
   rc: number;
   cls: ExitClass;
+  limit?: { status: number; message: string };  // 429/529 detail, kept instead of discarded (H-402)
   tokens?: number;
   cost_usd?: number;
   outputTail: string; // last lines of session output, for traces and escalations
 }
 
-export const SENTINELS = ['STOP', 'HOLD', 'BLOCKED', 'LIMIT', 'IDLE', 'RUNNING', 'PACE', 'PARKED', 'BACKOFF'] as const;
+export const SENTINELS = ['STOP', 'HOLD', 'BLOCKED', 'LIMIT', 'IDLE', 'RUNNING', 'PACE', 'PARKED', 'BACKOFF', 'WEDGED'] as const;
 export type Sentinel = (typeof SENTINELS)[number];

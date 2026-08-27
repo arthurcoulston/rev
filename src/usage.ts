@@ -167,3 +167,17 @@ export function worstSeverity(s: UsageSnapshot | null): string {
   const order = ['normal', 'warning', 'critical'];
   return s.limits.reduce((worst, l) => (order.indexOf(l.severity) > order.indexOf(worst) ? l.severity : worst), 'normal');
 }
+
+/** The bar that has actually run out, if one has. Returns the worst offender.
+ *
+ *  This is why the poller is worth having beyond a dashboard line: when a 429
+ *  arrives, the error text is prose and may or may not name the limit, but the
+ *  usage endpoint names it exactly — which cap, what percent, and when it
+ *  resets. Reading the two together is how "API 429" becomes "the Fable weekly
+ *  cap, back at 18:00 on Thursday". */
+export function exhaustedLimit(s: UsageSnapshot | null, atPercent = 95): UsageLimit | null {
+  if (!s || s.stale) return null; // stale numbers must never justify a long wait
+  const hit = s.limits.filter((l) => l.percent >= atPercent || l.severity === 'critical');
+  if (!hit.length) return null;
+  return hit.reduce((worst, l) => (l.percent > worst.percent ? l : worst));
+}

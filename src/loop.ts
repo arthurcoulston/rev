@@ -4,7 +4,9 @@
 import { stateDir } from './config.js';
 import { WakeCheck, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, recordSpend, scopeLabel, wakeCheck, workstreamInfo } from './helm.js';
 import { burnWindow, markBurnFloor } from './burn.js';
-import { breakerDecide, ladderDecide, rollingMean, velocityToPause } from './ladder.js';
+import { exhaustedLimit, pollUsage, readUsage } from './usage.js';
+import { raiseWedgeAlarm, wedgeDecide } from './health.js';
+import { breakerDecide, ladderDecide, limitDecide, rollingMean, velocityToPause } from './ladder.js';
 import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streak, streakReset } from './sentinels.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig } from './types.js';
@@ -18,10 +20,19 @@ const sleep = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
  *  do (H-134). Failure reads as "no news": the next poll decides. */
 function tryWakeCheck(g: GlobalConfig, l: LoopConfig, sinceSeq: number): WakeCheck | null {
   try {
-    return wakeCheck(g, l, sinceSeq);
+    const w = wakeCheck(g, l, sinceSeq);
+    // Reached Helm: any wedge is over, and a later one may alarm again.
+    streakReset(l.name, 'wakefail');
+    sClear(l.name, 'WEDGED');
+    return w;
   } catch (e) {
     logEvent(l.name, 'wake-check-failed', String(e).slice(0, 200));
     console.error(`rev: wake-check failed for '${l.name}' — retrying next poll. ${String(e).slice(0, 200)}`);
+    // "No news, try next poll" is right for contention and wrong for anything
+    // permanent. Past the cap this stops being a retry and becomes an outage
+    // nobody was told about (H-448).
+    const decision = wedgeDecide(streak(l.name, 'wakefail', true), g.wedge_cap);
+    if (decision.act === 'wedge') raiseWedgeAlarm(l.name, decision.reason);
     return null;
   }
 }
@@ -193,6 +204,25 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       } catch (e) {
         logEvent(l.name, 'spend-failed', `iter=${i} ${String(e).slice(0, 200)}`);
       }
+    }
+
+    // A transient condition is the one moment the usage poller earns its keep
+    // beyond a dashboard line (H-402). Poll it now — which cap is out, and when
+    // it comes back, decides whether this is a wait or a decision. Before this,
+    // every 429 got the same twenty blind fifteen-minute retries, which is how
+    // 2026-08-26 became 34-42 hours of silence.
+    if (res.cls === 'transient') {
+      const snap = g.usage_poll_seconds > 0 ? await pollUsage() : readUsage();
+      const ex = exhaustedLimit(snap, g.limit_exhausted_percent);
+      if (ex) logEvent(l.name, 'limit-identified', `cap="${ex.label}" percent=${ex.percent} resets=${ex.resets_at ?? '-'}`);
+      action = limitDecide({
+        limitStreak,
+        limitCap: g.limit_cap,
+        limitWait: g.limit_wait_seconds,
+        blockHorizonSeconds: g.limit_block_horizon_seconds,
+        exhausted: ex ? { label: ex.label, percent: ex.percent, resets_at: ex.resets_at } : null,
+        message: res.limit?.message,
+      });
     }
 
     // Burn breaker (H-412). The ladder judges how the iteration ended; this

@@ -3,7 +3,7 @@
 // completes a ticket through Helm → produced-check → idle → escalation on
 // repeated failure. No agent CLI, no tokens.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,6 +29,8 @@ helmo_mcp_server = "${join(HELM, 'dist', 'server.js')}"
 helmo_db = "${db}"
 poll_seconds = 1
 fail_cap = 1
+wedge_cap = 3
+usage_poll_seconds = 0
 ${loopToml}`,
   );
   mkdirSync(join(home, 'work'), { recursive: true });
@@ -125,6 +127,45 @@ fi
     // and it belongs to the wake gate, not to what counts as production.
     expect((events.match(/wake\s/g) ?? []).length).toBeGreaterThan(0);
   });
+
+  it('a loop that cannot reach Helm at all is declared wedged, not left polling (H-448)', async () => {
+    // The 2026-08-27 outage in miniature: the helm-cli always fails, so every
+    // wake-check throws. Before this, the loop logged politely once a minute
+    // and told nobody. A wedged loop deliberately keeps polling (the fault is
+    // outside it and may clear), so this drives it directly and stops it.
+    const e = setup(`[loops.wedge-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+`);
+    const broken = join(e.home, 'broken-helm.cjs');
+    writeFileSync(broken, 'process.stderr.write("SqliteError: UNIQUE constraint failed: tickets.id"); process.exit(1);\n');
+    writeFileSync(join(e.home, 'roster.toml'), readFileSync(join(e.home, 'roster.toml'), 'utf8').replace(HELM_CLI, broken));
+    // An IDLE cursor puts it on the wake-check path rather than straight into a run.
+    const dir = join(e.home, 'state', 'wedge-loop');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'IDLE'), '0');
+
+    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'wedge-loop'], {
+      env: e.env,
+      cwd: join(import.meta.dirname, '..'),
+      stdio: 'ignore',
+    });
+    try {
+      const deadline = Date.now() + 30_000;
+      while (!existsSync(join(dir, 'WEDGED')) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 250));
+      expect(existsSync(join(dir, 'WEDGED'))).toBe(true);
+      // Let it poll on past the wedge, to prove the alarm does not repeat.
+      await new Promise((r) => setTimeout(r, 3000));
+    } finally {
+      child.kill('SIGKILL');
+    }
+
+    const events = readFileSync(join(dir, 'events.log'), 'utf8');
+    expect(events).toMatch(/wedged.*consecutive wake-check failures/);
+    expect((events.match(/wedge-alarm/g) ?? []).length).toBe(1);
+  }, 45_000);
 
   it('the burn breaker halts a loop that keeps spending and escalates it (H-412)', () => {
     // The mock always writes something, so every iteration scores produced=true

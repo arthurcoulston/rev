@@ -29,6 +29,14 @@ const GLOBAL_DEFAULTS = {
   // Max usage poll (H-278). Ten minutes: the endpoint is undocumented and rate
   // limited, and the bars move slowly enough that anything faster buys nothing.
   usage_poll_seconds: 600,
+  // A quota that resets inside two hours is worth waiting out; one that resets
+  // in two days is a decision, and 2026-08-26 is what waiting through it looks
+  // like — three loops down 34-42h while the ladder burned its 20 attempts.
+  limit_block_horizon_seconds: 7200,
+  limit_exhausted_percent: 95,
+  // Five consecutive failures is five minutes at the default poll — long past
+  // contention, and short enough that nobody loses an afternoon (H-448).
+  wedge_cap: 5,
 };
 
 export interface Roster {

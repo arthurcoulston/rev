@@ -18,6 +18,7 @@ function state(name: string): string {
   if (sHas(name, 'STOP')) return 'STOP';
   if (sHas(name, 'HOLD')) return 'HOLD';
   if (sHas(name, 'BLOCKED')) return 'BLOCKED';
+  if (sHas(name, 'WEDGED')) return 'WEDGED';
   if (!pid && sHas(name, 'BACKOFF')) return 'BACKOFF';
   if (pid && sHas(name, 'LIMIT')) return 'LIMIT';
   if (pid && sHas(name, 'PARKED')) return 'PARKED';
@@ -56,12 +57,15 @@ createServer((_req, res) => {
       const st = state(l.name);
       const sp = spend(l.name);
       const blocked = st === 'BLOCKED' ? `<div class="blockreason">${esc(sGet(l.name, 'BLOCKED')?.split('\n')[0])} — see the Helm awaiting-you queue</div>` : '';
+      // A wedged loop cannot file a ticket about being wedged — Helm is what it
+      // cannot reach — so this row is the record (H-448).
+      const wedged = st === 'WEDGED' ? `<div class="blockreason">${esc(sGet(l.name, 'WEDGED')?.split('\n')[0])}</div>` : '';
       const events = lastEvents(l.name, 5)
         .map((e) => `<div class="ev">${esc(e)}</div>`)
         .join('');
       return `<tr>
         <td class="name">${esc(l.name)}</td>
-        <td class="st st-${st}">${st}${blocked}</td>
+        <td class="st st-${st}">${st}${blocked}${wedged}</td>
         <td>${esc(l.workstream)}</td>
         <td>${esc(l.runtime)}/${esc(l.model)}</td>
         <td>${esc(sGet(l.name, 'PACE')?.trim() ?? '1')}</td>
@@ -80,7 +84,7 @@ createServer((_req, res) => {
     th { font-size: 12px; text-transform: uppercase; color: #666; }
     .name { font-family: ui-monospace, monospace; }
     .st { font-weight: 600; }
-    .st-RUNNING { color: #167c2e; } .st-IDLE { color: #666; } .st-BLOCKED, .st-CRASHED { color: #b00; }
+    .st-RUNNING { color: #167c2e; } .st-IDLE { color: #666; } .st-BLOCKED, .st-CRASHED, .st-WEDGED { color: #b00; }
     .st-LIMIT, .st-PARKED, .st-BACKOFF { color: #b60; } .st-STOP, .st-HOLD, .st-halted { color: #999; }
     .trace { font-family: ui-monospace, monospace; font-size: 11px; color: #555; }
     .usage { font-family: ui-monospace, monospace; font-size: 12px; color: #555; margin: 0 0 12px; }

@@ -15,6 +15,8 @@ import { Sentinel } from './types.js';
 //   PACE     operator/agent: velocity command ("park" or fraction (0,1])
 //   PARKED   loop: acknowledgment that it has actually parked (command != state)
 //   BACKOFF  supervisor: loop crashed; respawn pending (contents = attempt + retry time)
+//   WEDGED   rev: cannot reach Helm at all; alarm raised. NOT a halt — the loop
+//            keeps polling, because the fault is outside it and may clear.
 
 export function sPath(loop: string, s: Sentinel | string): string {
   return join(stateDir(loop), s);

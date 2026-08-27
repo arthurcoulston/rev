@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { breakerDecide, classifyExit, ladderDecide, respawnDecide, rollingMean, velocityToPause } from '../src/ladder.js';
+import { breakerDecide, classifyExit, limitDecide, ladderDecide, respawnDecide, rollingMean, velocityToPause } from '../src/ladder.js';
 
 const base = { produced: true, failStreak: 0, limitStreak: 0, failCap: 2, limitCap: 20, limitWait: 900 };
 
@@ -111,5 +111,45 @@ describe('breakerDecide (H-412)', () => {
 
   it('a zero cap disables that limb', () => {
     expect(breakerDecide({ hourUsd: 999, dayUsd: 999, continueStreak: 999 }, { usdPerHour: 0, usdPerDay: 0, continueCap: 0 }).act).toBe('ok');
+  });
+});
+
+describe('limitDecide (H-402)', () => {
+  const NOW = Date.parse('2026-08-26T04:00:00Z');
+  const base = { limitStreak: 1, limitCap: 20, limitWait: 900, blockHorizonSeconds: 7200, exhausted: null, nowMs: NOW };
+
+  it('with no identifiable cap, behaves exactly as the old ladder did', () => {
+    expect(limitDecide(base)).toEqual({ act: 'limit_wait', waitSeconds: 900, attempt: 1 });
+    expect(limitDecide({ ...base, limitStreak: 21 }).act).toBe('blocked');
+  });
+
+  it('waits to the reset when the cap comes back soon', () => {
+    const a = limitDecide({
+      ...base,
+      exhausted: { label: 'session (5h)', percent: 100, resets_at: '2026-08-26T04:30:00Z' },
+    });
+    expect(a).toEqual({ act: 'limit_wait', waitSeconds: 1860, attempt: 1 }); // 30 min + a minute
+  });
+
+  it('blocks with the cap named when the reset is beyond the horizon — the 2026-08-26 case', () => {
+    const a = limitDecide({
+      ...base,
+      exhausted: { label: 'weekly (Fable)', percent: 100, resets_at: '2026-08-27T18:00:00Z' },
+      message: 'You have reached your usage limit for this model.',
+    });
+    expect(a.act).toBe('blocked');
+    if (a.act !== 'blocked') throw new Error('unreachable');
+    expect(a.reason).toContain('weekly (Fable)');
+    expect(a.reason).toContain('2026-08-27T18:00:00Z');
+    expect(a.reason).toContain('The API said: You have reached your usage limit');
+  });
+
+  it('blocks rather than waiting forever when the cap names no reset time', () => {
+    expect(limitDecide({ ...base, exhausted: { label: 'weekly (all models)', percent: 99, resets_at: null } }).act).toBe('blocked');
+  });
+
+  it('a reset already past retries shortly rather than computing a negative wait', () => {
+    const a = limitDecide({ ...base, exhausted: { label: 'session (5h)', percent: 100, resets_at: '2026-08-26T03:00:00Z' } });
+    expect(a).toEqual({ act: 'limit_wait', waitSeconds: 60, attempt: 1 });
   });
 });

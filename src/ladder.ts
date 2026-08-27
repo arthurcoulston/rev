@@ -119,3 +119,61 @@ export function breakerDecide(
   }
   return { act: 'ok' };
 }
+
+// What to do about a transient API condition, now that rev can see which cap
+// it hit (H-402, using the H-278 poller).
+//
+// The old behaviour was one rule for every 429: wait 15 minutes, up to twenty
+// times, then block. For an overloaded API that is right. For an exhausted
+// weekly quota it is exactly wrong — on 2026-08-26 three loops spent five
+// hours of blind retries and then sat blocked for 34-42 more, while the answer
+// ("this resets Thursday at 18:00") was in the response and in the usage
+// endpoint the whole time.
+//
+// So: a cap that resets soon is waited out to its reset. A cap that resets
+// beyond the horizon is a decision, and goes to a human immediately, naming
+// the cap and the time. Anything we cannot identify keeps the old ladder.
+export interface LimitContext {
+  limitStreak: number;
+  limitCap: number;
+  limitWait: number;
+  blockHorizonSeconds: number;
+  /** From the usage endpoint: the bar that is actually out, if known. */
+  exhausted: { label: string; percent: number; resets_at: string | null } | null;
+  /** What the 429 itself said, for the escalation. */
+  message?: string;
+  nowMs?: number;
+}
+
+export function limitDecide(c: LimitContext): LadderAction {
+  const now = c.nowMs ?? Date.now();
+  const said = c.message ? ` The API said: ${c.message.slice(0, 300)}` : '';
+
+  if (c.exhausted) {
+    const resetMs = c.exhausted.resets_at ? Date.parse(c.exhausted.resets_at) : NaN;
+    const secondsAway = Number.isFinite(resetMs) ? Math.round((resetMs - now) / 1000) : NaN;
+    const when = c.exhausted.resets_at ?? 'an unknown time';
+    const cap = `${c.exhausted.label} at ${c.exhausted.percent}%`;
+
+    if (!Number.isFinite(secondsAway) || secondsAway > c.blockHorizonSeconds) {
+      return {
+        act: 'blocked',
+        reason:
+          `quota exhausted — ${cap}, resets ${when}. That is beyond the ${Math.round(c.blockHorizonSeconds / 3600)}h waiting horizon, ` +
+          `so this is a decision rather than a retry: move the loop to another model, or leave it down until the reset.${said}`,
+      };
+    }
+    if (secondsAway <= 0) return { act: 'limit_wait', waitSeconds: 60, attempt: c.limitStreak };
+    // Wait to the reset plus a small margin, rather than counting attempts.
+    return { act: 'limit_wait', waitSeconds: secondsAway + 60, attempt: c.limitStreak };
+  }
+
+  // Nothing identifiable: the pre-existing ladder, unchanged.
+  if (c.limitStreak > c.limitCap) {
+    return {
+      act: 'blocked',
+      reason: `transient-condition cap exceeded (${c.limitStreak} consecutive waits) — beyond any session window, needs a human look.${said}`,
+    };
+  }
+  return { act: 'limit_wait', waitSeconds: c.limitWait, attempt: c.limitStreak };
+}

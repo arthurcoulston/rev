@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseUsage, usageLine, worstSeverity } from '../src/usage.js';
+import { exhaustedLimit, parseUsage, usageLine, worstSeverity } from '../src/usage.js';
 
 // The real wire shape, captured from api/oauth/usage on 2026-08-27. The
 // endpoint is undocumented, so this fixture is the contract: if a future
@@ -71,5 +71,30 @@ describe('worstSeverity', () => {
     hot.limits[1]!.severity = 'critical';
     expect(worstSeverity(hot)).toBe('critical');
     expect(worstSeverity(null)).toBe('unknown');
+  });
+});
+
+describe('exhaustedLimit (H-402)', () => {
+  it('finds nothing on an ordinary day', () => {
+    expect(exhaustedLimit(parseUsage(LIVE))).toBeNull();
+  });
+
+  it('names the worst bar that is actually out', () => {
+    const s = parseUsage(LIVE);
+    s.limits[1]!.percent = 97;   // weekly (all models)
+    s.limits[2]!.percent = 100;  // weekly (Fable)
+    expect(exhaustedLimit(s)!.label).toBe('weekly (Fable)');
+  });
+
+  it("takes the endpoint's own 'critical' even below the percentage", () => {
+    const s = parseUsage(LIVE);
+    s.limits[0]!.severity = 'critical';
+    expect(exhaustedLimit(s)!.label).toBe('session (5h)');
+  });
+
+  it('never lets stale numbers justify a wait', () => {
+    const s = { ...parseUsage(LIVE), stale: true };
+    s.limits[2]!.percent = 100;
+    expect(exhaustedLimit(s)).toBeNull();
   });
 });
