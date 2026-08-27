@@ -89,6 +89,43 @@ fi
     expect(events).toMatch(/action=idle/);
   });
 
+  it('a note-only session is not production — the loop idles instead of running on (H-412)', () => {
+    // The exact shape that cost the most: an agent finds nothing actionable,
+    // records that honestly, and ends. Before the advancing check that note
+    // scored as production and bought another full iteration.
+    const e = setup(`[loops.note-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+set -e
+ID=$(node ${HELM_CLI} list --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -n "$ID" ]; then
+  node ${HELM_CLI} update --ticket $ID --note "checked the queue; nothing actionable yet"
+  echo "rev-mock-usage tokens=1000 cost_usd=0.90"
+fi
+'''
+`);
+    seedTicket(e, 'A ticket the note loop will only comment on');
+    rev(e, ['run', 'note-loop', '--count', '3']);
+
+    const dir = join(e.home, 'state', 'note-loop');
+    const events = readFileSync(join(dir, 'events.log'), 'utf8');
+    expect(events).toMatch(/run-end.*iter=1.*produced=false.*action=idle/);
+    expect(existsSync(join(dir, 'IDLE'))).toBe(true);
+
+    // Every pass idles; none is scored as production, so none skips the gate.
+    expect(events).not.toMatch(/action=continue/);
+
+    // What this does NOT fix, and the reason there are wakes here at all: the
+    // seeded ticket stays ready because the mock never claims it, and a scoped
+    // loop's wake gate fires on `ready_count > 0` alone. So a ready ticket the
+    // agent keeps declining still re-wakes it each poll. Latent rather than
+    // observed — ward's traces show idles landing on genuinely empty queues —
+    // and it belongs to the wake gate, not to what counts as production.
+    expect((events.match(/wake\s/g) ?? []).length).toBeGreaterThan(0);
+  });
+
   it('the burn breaker halts a loop that keeps spending and escalates it (H-412)', () => {
     // The mock always writes something, so every iteration scores produced=true
     // and the ladder says 'continue' forever — the shape of the burns this

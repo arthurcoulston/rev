@@ -136,6 +136,9 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     console.log(res.outputTail.slice(-2000));
     console.log(`=== ${l.name} run ${i} ended (rc=${res.rc} class=${res.cls} ${durSec}s) ===`);
 
+    // Production means work advanced, not bytes written (H-412): a note-only
+    // update does not count, so an agent that reports "nothing to do" idles
+    // instead of re-certifying itself busy.
     const produced = res.cls === 'ok' ? actorActivity(g, l.name, before.max_seq) > 0 : false;
     const failStreak = res.cls === 'failure' ? streak(l.name, 'fail', true) : 0;
     const limitStreak = res.cls === 'transient' ? streak(l.name, 'limit', true) : 0;

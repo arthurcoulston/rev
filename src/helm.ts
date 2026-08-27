@@ -61,8 +61,13 @@ export function workstreamInfo(g: GlobalConfig, name: string): WorkstreamInfo | 
   }
 }
 
+// "Did the agent advance anything?" — not "did it write anything" (H-412).
+// --advancing drops note-only updates, so a session whose whole output was
+// "still blocked, nothing to do" scores unproductive and the loop idles at the
+// cursor instead of buying itself another iteration. Ward's cheapest passes
+// were exactly that shape.
 export function actorActivity(g: GlobalConfig, name: string, sinceSeq: number): number {
-  return (run(g, ['actor-activity', '--name', name, '--since-seq', String(sinceSeq)]) as { events: number }).events;
+  return (run(g, ['actor-activity', '--name', name, '--since-seq', String(sinceSeq), '--advancing']) as { events: number }).events;
 }
 
 export function actorTickets(g: GlobalConfig, name: string, sinceSeq: number): { id: string; events: number }[] {

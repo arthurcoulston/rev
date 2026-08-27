@@ -79,6 +79,14 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 - The supervisor never overrides a halt sentinel: STOP/HOLD/BLOCKED keep a
   loop down until an operator (or Helm answer) clears them; clearance is
   picked up within one poll.
+- **Production means work advanced, not bytes written** (H-412). The
+  produced-check calls helm-cli `actor-activity --advancing`, so a note-only
+  update does not count. It matters because `ladderDecide` returns `continue`
+  on production and `continue` skips the wake gate entirely: an agent that
+  honestly recorded "nothing actionable" was certifying itself busy and buying
+  another full iteration. Known gap, latent rather than observed: a scoped
+  loop's wake still fires on `ready_count > 0` alone, so a ready ticket the
+  agent keeps declining re-wakes it each poll. That belongs to the wake gate.
 - **The burn breaker is a ceiling, not a pacer** (H-412). It checks only
   `continue` iterations — every other ladder action is already stopping — and
   trips to BLOCKED with the usual escalation, so a runaway reaches Arthur's
