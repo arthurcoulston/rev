@@ -89,6 +89,42 @@ fi
     expect(events).toMatch(/action=idle/);
   });
 
+  it('the burn breaker halts a loop that keeps spending and escalates it (H-412)', () => {
+    // The mock always writes something, so every iteration scores produced=true
+    // and the ladder says 'continue' forever — the shape of the burns this
+    // exists for. At $0.60 an iteration against a $1 day cap it must stop on
+    // the second, not run on.
+    const e = setup(`[loops.burn-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+burn_usd_per_day = 1
+mock_cmd = '''
+set -e
+ID=$(node ${HELM_CLI} list --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -n "$ID" ]; then
+  node ${HELM_CLI} update --ticket $ID --note "busy, making no progress" --status in_progress
+  echo "rev-mock-usage tokens=1000 cost_usd=0.60"
+fi
+'''
+`);
+    seedTicket(e, 'The ticket the burn loop keeps noting on');
+    const out = rev(e, ['run', 'burn-loop', '--count', '5']);
+
+    expect(out).toContain('burn breaker');
+    expect(out).not.toContain('run 3 started'); // stopped on the second, not the fifth
+
+    const dir = join(e.home, 'state', 'burn-loop');
+    expect(existsSync(join(dir, 'BLOCKED'))).toBe(true);
+    const events = readFileSync(join(dir, 'events.log'), 'utf8');
+    expect(events).toMatch(/breaker.*metered in the last 24h/);
+    expect(events).toMatch(/blocked/);
+
+    // The alarm reached the human queue, not just the trace.
+    const q = helm(e, ['list', '--status', 'awaiting_human']) as { tickets: { title: string }[] };
+    expect(q.tickets.some((t) => t.title.includes('burn-loop'))).toBe(true);
+  });
+
   it('nets out agent self-reported spend so the session lands in the totals exactly once (H-57)', () => {
     // The mock misbehaves: it guesses its own usage in an update. The metered
     // figure must win — final totals equal the meter, not meter + guess.

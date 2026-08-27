@@ -26,6 +26,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   totals exactly once. Each guess is cancelled on the ticket that carries it
   and the meter lands on the primary alone (H-187) — a session-wide
   correction once left a ticket at −62k beside a neighbour's +80k guess.
+- `burn.ts` — reads the token-log back as a per-loop rolling window (hour and
+  day) for the breaker. A file scan, not an in-memory total, because the two
+  burns it exists for both spanned process restarts; the window is floored at
+  `.burn_floor` (stamped at loop start) so a resumed loop starts clean instead
+  of tripping again on money already accounted for (H-412).
 - `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent
   CLAUDE/ANTHROPIC env — the auth-leak fix; don't weaken it), per-session token
@@ -74,6 +79,15 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 - The supervisor never overrides a halt sentinel: STOP/HOLD/BLOCKED keep a
   loop down until an operator (or Helm answer) clears them; clearance is
   picked up within one poll.
+- **The burn breaker is a ceiling, not a pacer** (H-412). It checks only
+  `continue` iterations — every other ladder action is already stopping — and
+  trips to BLOCKED with the usual escalation, so a runaway reaches Arthur's
+  queue rather than a log. Defaults (`burn_usd_per_hour` 30, `burn_usd_per_day`
+  75, `continue_cap` 15, per-loop overridable) sit above every figure in the
+  token-log's history: a trip means new territory, never a busy afternoon. It
+  deliberately does NOT catch a small spin — ward's five iterations against a
+  one-ticket wake cost $5.70 — because that is a question of what counts as
+  production, not of spend.
 - Escalations must land as Helmo tickets, never only in logs; a BLOCKED loop
   that couldn't escalate prints loudly and relies on the dashboard.
 - Liveness is identity, never a bare pid. A RUNNING marker records the command

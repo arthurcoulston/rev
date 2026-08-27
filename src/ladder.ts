@@ -83,3 +83,39 @@ export function rollingMean(window: number[], next: number, n = 5): { window: nu
   const w = [...window, next].slice(-n);
   return { window: w, mean: Math.round(w.reduce((a, b) => a + b, 0) / w.length) };
 }
+
+// The burn breaker (H-412). The ladder above judges each iteration on how it
+// ended; this judges the loop on what it has cost. Two burns motivated it and
+// neither showed up as a failure: bosun spent $86 in a day triaging, and rolo
+// ran 52 consecutive productive-looking iterations for $108. Both looked
+// healthy to every check rev had.
+//
+// Thresholds are set from the whole token-log, not from taste: no loop hour has
+// ever exceeded $28, no normal day exceeds $36, and no loop but rolo has ever
+// strung more than five iterations together. Defaults sit above every observed
+// legitimate figure so a trip means new territory, never a busy afternoon.
+//
+// What this does NOT catch: a small spin. Ward's five-iteration loop against a
+// one-ticket wake cost $5.70 — under every cap here, and correctly so. That one
+// is a question of what counts as production, not of how much was spent.
+export interface BurnCaps {
+  usdPerHour: number;   // 0 disables
+  usdPerDay: number;    // 0 disables
+  continueCap: number;  // consecutive iterations without idling; 0 disables
+}
+
+export function breakerDecide(
+  s: { hourUsd: number; dayUsd: number; continueStreak: number },
+  caps: BurnCaps,
+): { act: 'ok' } | { act: 'trip'; reason: string } {
+  if (caps.usdPerHour > 0 && s.hourUsd > caps.usdPerHour) {
+    return { act: 'trip', reason: `burn breaker: $${s.hourUsd.toFixed(2)} metered in the last hour, over the $${caps.usdPerHour.toFixed(2)} cap` };
+  }
+  if (caps.usdPerDay > 0 && s.dayUsd > caps.usdPerDay) {
+    return { act: 'trip', reason: `burn breaker: $${s.dayUsd.toFixed(2)} metered in the last 24h, over the $${caps.usdPerDay.toFixed(2)} cap` };
+  }
+  if (caps.continueCap > 0 && s.continueStreak > caps.continueCap) {
+    return { act: 'trip', reason: `burn breaker: ${s.continueStreak} consecutive iterations without idling, over the cap of ${caps.continueCap} — the loop is not reaching a stopping point` };
+  }
+  return { act: 'ok' };
+}

@@ -20,6 +20,12 @@ const GLOBAL_DEFAULTS = {
   respawn_backoff_seconds: 30,
   respawn_backoff_cap_seconds: 900,
   min_uptime_seconds: 60,
+  // Burn breaker (H-412). Set above every figure in the token-log's history so
+  // a trip means new territory: no loop hour has exceeded $28, no ordinary day
+  // $36, and only rolo has ever run more than five iterations without idling.
+  burn_usd_per_hour: 30,
+  burn_usd_per_day: 75,
+  continue_cap: 15,
 };
 
 export interface Roster {
@@ -63,6 +69,9 @@ export function loadRoster(): Roster {
       mcp_extra: l['mcp_extra'] ? resolveHome(String(l['mcp_extra'])) : undefined,
       skills: Array.isArray(l['skills']) ? (l['skills'] as unknown[]).map((s) => resolveHome(String(s))) : undefined,
       mock_cmd: l['mock_cmd'] ? String(l['mock_cmd']) : undefined,
+      burn_usd_per_hour: l['burn_usd_per_hour'] === undefined ? undefined : Number(l['burn_usd_per_hour']),
+      burn_usd_per_day: l['burn_usd_per_day'] === undefined ? undefined : Number(l['burn_usd_per_day']),
+      continue_cap: l['continue_cap'] === undefined ? undefined : Number(l['continue_cap']),
     };
   }
   return { global, loops };

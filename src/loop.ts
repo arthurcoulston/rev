@@ -3,7 +3,8 @@
 // foreground; the multi-loop supervisor is the next milestone.
 import { stateDir } from './config.js';
 import { WakeCheck, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, recordSpend, scopeLabel, wakeCheck, workstreamInfo } from './helm.js';
-import { ladderDecide, rollingMean, velocityToPause } from './ladder.js';
+import { burnWindow, markBurnFloor } from './burn.js';
+import { breakerDecide, ladderDecide, rollingMean, velocityToPause } from './ladder.js';
 import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streak, streakReset } from './sentinels.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig } from './types.js';
@@ -38,6 +39,8 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   }
   sSet(l.name, 'RUNNING', runningStamp());
   if (!sHas(l.name, 'PACE') && l.pace < 1) sSet(l.name, 'PACE', String(l.pace));
+  // Burn-breaker window floor: this process's start (H-412).
+  markBurnFloor(l.name);
   const cleanup = () => sClear(l.name, 'RUNNING', 'PARKED', 'LIMIT');
   process.on('exit', cleanup);
   process.on('SIGINT', () => process.exit(130));
@@ -136,7 +139,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     const produced = res.cls === 'ok' ? actorActivity(g, l.name, before.max_seq) > 0 : false;
     const failStreak = res.cls === 'failure' ? streak(l.name, 'fail', true) : 0;
     const limitStreak = res.cls === 'transient' ? streak(l.name, 'limit', true) : 0;
-    const action = ladderDecide(res.cls, {
+    let action = ladderDecide(res.cls, {
       produced,
       failStreak,
       limitStreak,
@@ -187,6 +190,31 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       } catch (e) {
         logEvent(l.name, 'spend-failed', `iter=${i} ${String(e).slice(0, 200)}`);
       }
+    }
+
+    // Burn breaker (H-412). The ladder judges how the iteration ended; this
+    // judges what the loop has cost. Only 'continue' is checked — every other
+    // action is already stopping. Evaluated after the spend write above so the
+    // window includes the iteration that just ran.
+    if (action.act === 'continue') {
+      const continueStreak = streak(l.name, 'continue', true);
+      const w = burnWindow(l.name);
+      const trip = breakerDecide(
+        { hourUsd: w.hourUsd, dayUsd: w.dayUsd, continueStreak },
+        {
+          usdPerHour: l.burn_usd_per_hour ?? g.burn_usd_per_hour,
+          usdPerDay: l.burn_usd_per_day ?? g.burn_usd_per_day,
+          continueCap: l.continue_cap ?? g.continue_cap,
+        },
+      );
+      if (trip.act === 'trip') {
+        logEvent(l.name, 'breaker', trip.reason);
+        console.log(`rev: ${trip.reason} — halting '${l.name}'.`);
+        streakReset(l.name, 'continue');
+        action = { act: 'blocked', reason: trip.reason };
+      }
+    } else {
+      streakReset(l.name, 'continue');
     }
 
     switch (action.act) {

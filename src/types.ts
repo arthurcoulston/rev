@@ -11,6 +11,9 @@ export interface GlobalConfig {
   respawn_backoff_seconds: number;     // supervisor: first-crash respawn wait, doubles per streak
   respawn_backoff_cap_seconds: number; // supervisor: backoff ceiling
   min_uptime_seconds: number;          // supervisor: exits younger than this count as unhealthy
+  burn_usd_per_hour: number;   // breaker: metered spend per loop per rolling hour; 0 disables
+  burn_usd_per_day: number;    // breaker: same over 24h; 0 disables
+  continue_cap: number;        // breaker: consecutive iterations without idling; 0 disables
 }
 
 export interface LoopConfig {
@@ -26,6 +29,9 @@ export interface LoopConfig {
   mcp_extra?: string;      // optional path to JSON with additional MCP servers
   skills?: string[];       // crew skill files appended to the constitution at spawn (H-247)
   mock_cmd?: string;       // mock runtime only: shell command to run per iteration
+  burn_usd_per_hour?: number;  // breaker overrides for this loop (else the global)
+  burn_usd_per_day?: number;
+  continue_cap?: number;
 }
 
 // Session outcome classes, in the ladder's terms.

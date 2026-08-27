@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyExit, ladderDecide, respawnDecide, rollingMean, velocityToPause } from '../src/ladder.js';
+import { breakerDecide, classifyExit, ladderDecide, respawnDecide, rollingMean, velocityToPause } from '../src/ladder.js';
 
 const base = { produced: true, failStreak: 0, limitStreak: 0, failCap: 2, limitCap: 20, limitWait: 900 };
 
@@ -70,5 +70,46 @@ describe('rollingMean', () => {
     for (const d of [10, 20, 30, 40, 50, 60]) ({ window: w, mean: m } = rollingMean(w, d));
     expect(w).toEqual([20, 30, 40, 50, 60]);
     expect(m).toBe(40);
+  });
+});
+
+describe('breakerDecide (H-412)', () => {
+  const caps = { usdPerHour: 30, usdPerDay: 75, continueCap: 15 };
+  const quiet = { hourUsd: 2, dayUsd: 12, continueStreak: 3 };
+
+  it('passes an ordinary loop day', () => {
+    expect(breakerDecide(quiet, caps).act).toBe('ok');
+  });
+
+  it('trips on the hour cap, and says what it saw', () => {
+    const d = breakerDecide({ ...quiet, hourUsd: 31 }, caps);
+    expect(d.act).toBe('trip');
+    expect(d.act === 'trip' && d.reason).toContain('$31.00');
+  });
+
+  it("trips on the day cap — bosun's $86 and rolo's $108 would both have been caught", () => {
+    expect(breakerDecide({ ...quiet, dayUsd: 85.99 }, caps).act).toBe('trip');
+    expect(breakerDecide({ ...quiet, dayUsd: 108.31 }, caps).act).toBe('trip');
+  });
+
+  it("trips on a loop that never idles — rolo's 52-iteration run", () => {
+    expect(breakerDecide({ ...quiet, continueStreak: 52 }, caps).act).toBe('trip');
+    expect(breakerDecide({ ...quiet, continueStreak: 15 }, caps).act).toBe('ok');
+  });
+
+  it('leaves every legitimate figure in the token-log alone', () => {
+    // Highest hour ever metered ($27.65), highest ordinary day ($36.39), and
+    // the longest continue run outside rolo (ward's five).
+    expect(breakerDecide({ hourUsd: 27.65, dayUsd: 36.39, continueStreak: 5 }, caps).act).toBe('ok');
+  });
+
+  it('does not catch a small spin, and should not pretend to', () => {
+    // Ward's five iterations against a one-ticket wake cost $5.70 in 13 minutes.
+    // That is a question of what counts as production, not of spend.
+    expect(breakerDecide({ hourUsd: 5.7, dayUsd: 18.86, continueStreak: 5 }, caps).act).toBe('ok');
+  });
+
+  it('a zero cap disables that limb', () => {
+    expect(breakerDecide({ hourUsd: 999, dayUsd: 999, continueStreak: 999 }, { usdPerHour: 0, usdPerDay: 0, continueCap: 0 }).act).toBe('ok');
   });
 });
