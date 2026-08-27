@@ -26,6 +26,15 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   totals exactly once. Each guess is cancelled on the ticket that carries it
   and the meter lands on the primary alone (H-187) — a session-wide
   correction once left a ticket at −62k beside a neighbour's +80k guess.
+- `usage.ts` — Max-plan usage bars from the undocumented
+  `api.anthropic.com/api/oauth/usage` (H-278; security design approved in
+  H-280, landed-code check is H-298). The supervisor polls every 10 min and
+  writes `~/.rev/usage.json`; `rev usage [--poll]`, `rev status` and the view
+  header read it. Parse the `limits` array, not the top-level `five_hour` /
+  `seven_day` objects: it is self-describing and it NAMES the model a scoped
+  weekly cap belongs to, which is the only way the Fable cap is legible rather
+  than an opaque codename. Every failure is soft — keep the last numbers, mark
+  stale, back off; nothing in rev may wait on a usage bar.
 - `burn.ts` — reads the token-log back as a per-loop rolling window (hour and
   day) for the breaker. A file scan, not an in-memory total, because the two
   burns it exists for both spanned process restarts; the window is floored at
@@ -87,6 +96,13 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   another full iteration. Known gap, latent rather than observed: a scoped
   loop's wake still fires on `ready_count > 0` alone, so a ready ticket the
   agent keeps declining re-wakes it each poll. That belongs to the wake gate.
+- **The usage poller never touches the token except in one header** (H-278/
+  H-280). Read from the keychain per poll and discarded when the call returns;
+  never held for the process lifetime, never written to disk, never in argv —
+  which is why it uses `fetch` and not `curl`, since process args are readable
+  via `ps`. `usage.json` holds PARSED values only: agents read that file into
+  prompts, so no raw upstream text may pass through, and an error line carries
+  our own words plus a status code, never a response body.
 - **The burn breaker is a ceiling, not a pacer** (H-412). It checks only
   `continue` iterations — every other ladder action is already stopping — and
   trips to BLOCKED with the usual escalation, so a runaway reaches Arthur's

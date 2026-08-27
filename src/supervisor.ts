@@ -11,6 +11,7 @@ import { closeSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir } from './config.js';
 import { respawnDecide } from './ladder.js';
+import { pollUsage } from './usage.js';
 import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet } from './sentinels.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 
@@ -52,6 +53,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
       if (!shuttingDown) return;
       for (const s of slots.values()) if (s.child) return;
       clearInterval(timer);
+      if (usageTimer) clearInterval(usageTimer);
       logEvent(SUP, 'fleet-stop', 'drained');
       console.log('rev: fleet drained — supervisor exiting.');
       resolve();
@@ -136,6 +138,12 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
     };
     const timer = setInterval(poll, g.poll_seconds * 1000);
 
+    // Max-plan usage (H-278). Guidance, never a gate: pollUsage never throws,
+    // and nothing above waits on it.
+    const usageTimer =
+      g.usage_poll_seconds > 0 ? setInterval(() => void pollUsage(), g.usage_poll_seconds * 1000) : null;
+    if (usageTimer) void pollUsage();
+
     const drain = (sig: string) => {
       if (shuttingDown) return;
       shuttingDown = true;
@@ -165,6 +173,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
     if (slots.size === 0) {
       console.log('rev: roster has no loops — nothing to supervise.');
       clearInterval(timer);
+      if (usageTimer) clearInterval(usageTimer);
       resolve();
     }
   });

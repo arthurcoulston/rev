@@ -26,6 +26,9 @@ const GLOBAL_DEFAULTS = {
   burn_usd_per_hour: 30,
   burn_usd_per_day: 75,
   continue_cap: 15,
+  // Max usage poll (H-278). Ten minutes: the endpoint is undocumented and rate
+  // limited, and the bars move slowly enough that anything faster buys nothing.
+  usage_poll_seconds: 600,
 };
 
 export interface Roster {

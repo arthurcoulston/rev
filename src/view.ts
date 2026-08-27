@@ -2,6 +2,7 @@
 // Deliberately plain read-only dashboard: the machine at a glance.
 // Helm shows the work; this shows the loops that do it.
 import { createServer } from 'node:http';
+import { readUsage, usageLine, worstSeverity } from './usage.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { revHome, loadRoster, stateDir, tokenLogPath } from './config.js';
@@ -82,11 +83,14 @@ createServer((_req, res) => {
     .st-RUNNING { color: #167c2e; } .st-IDLE { color: #666; } .st-BLOCKED, .st-CRASHED { color: #b00; }
     .st-LIMIT, .st-PARKED, .st-BACKOFF { color: #b60; } .st-STOP, .st-HOLD, .st-halted { color: #999; }
     .trace { font-family: ui-monospace, monospace; font-size: 11px; color: #555; }
+    .usage { font-family: ui-monospace, monospace; font-size: 12px; color: #555; margin: 0 0 12px; }
+    .usage.warning { color: #a60; } .usage.critical { color: #b00; font-weight: 600; }
     .blockreason { font-weight: 400; font-size: 12px; color: #b00; }
     .dim { color: #bbb; }
     h1 span { color: #999; font-weight: normal; font-size: 15px; }
   </style>
   <h1>Rev <span>the machine, read-only · supervisor ${pidAlive('supervisor') ? `running (pid ${pidAlive('supervisor')})` : 'down'} · home ${esc(revHome())} · work lives in <a href="http://localhost:4400">Helm</a></span></h1>
+  <p class="usage ${worstSeverity(readUsage())}">${esc(usageLine(readUsage()))}</p>
   <table><tr><th>Loop</th><th>State</th><th>Workstream</th><th>Runtime</th><th>Pace</th><th>Spend</th><th>Recent trace</th></tr>
   ${rows || '<tr><td colspan="7">No loops in the roster yet.</td></tr>'}</table>`);
 }).listen(port, host, () => console.log(`Rev view (read-only): http://localhost:${port} — home: ${revHome()}`));

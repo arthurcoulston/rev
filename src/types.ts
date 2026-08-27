@@ -14,6 +14,7 @@ export interface GlobalConfig {
   burn_usd_per_hour: number;   // breaker: metered spend per loop per rolling hour; 0 disables
   burn_usd_per_day: number;    // breaker: same over 24h; 0 disables
   continue_cap: number;        // breaker: consecutive iterations without idling; 0 disables
+  usage_poll_seconds: number;  // Max-plan usage poll interval; 0 disables (H-278)
 }
 
 export interface LoopConfig {
