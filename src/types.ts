@@ -26,6 +26,7 @@ export interface LoopConfig {
   cwd: string;
   runtime: 'claude' | 'codex' | 'mock';
   model: string;
+  probe_model?: string;    // model for probe iterations — nothing ready, nothing held (H-412)
   constitution: string;    // path, relative to rev home or absolute
   version: string;         // loop version — part of the actor identity
   pace: number;            // velocity fraction (0,1]

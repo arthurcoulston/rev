@@ -73,6 +73,7 @@ export function loadRoster(): Roster {
       cwd: expand(String(l['cwd'])),
       runtime: l['runtime'] as LoopConfig['runtime'],
       model: String(l['model'] ?? 'mock'),
+      probe_model: l['probe_model'] ? String(l['probe_model']) : undefined,
       constitution: l['constitution'] ? resolveHome(String(l['constitution'])) : '',
       version: String(l['version'] ?? '0.1'),
       pace: Number(l['pace'] ?? 1),

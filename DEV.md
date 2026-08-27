@@ -130,6 +130,16 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   fault is outside the loop and may clear, so it keeps polling. It sorts above
   RUNNING/IDLE in the status label because a wedged loop looks busy from the
   outside while drawing no work at all.
+- **An empty-handed iteration is a probe and runs on the probe model** (H-412;
+  crew `skills/model-selection.md`). A loop with `probe_model` in the roster
+  runs an iteration on it when the wake-check shows nothing ready AND nothing
+  in_progress in the loop's own hands (`held_count`, from helmo) — that session
+  can only read the queue and stop, and running it at the working tier is pure
+  waste. Decided fresh each iteration (`probeDecide`), never sticky; the
+  actor identity, token-log, and spend note all carry the model actually used.
+  An unknown `held_count` (older helmo) never probes — real work misrouted to
+  the small tier is the worse mistake — and store-wide loops never probe:
+  their motion-only wakes ARE the triage work.
 - **The burn breaker is a ceiling, not a pacer** (H-412). It checks only
   `continue` iterations — every other ladder action is already stopping — and
   trips to BLOCKED with the usual escalation, so a runaway reaches Arthur's

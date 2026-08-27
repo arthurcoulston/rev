@@ -23,7 +23,7 @@ export function cleanEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: string): SessionResult {
+export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: string, model = l.model): SessionResult {
   // Apparatus pre-flight, fail closed: never launch a half-instructed agent.
   if (l.runtime !== 'mock') {
     if (!l.constitution || !existsSync(l.constitution) || statSync(l.constitution).size === 0) {
@@ -35,11 +35,11 @@ export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: stri
   }
   switch (l.runtime) {
     case 'claude':
-      return runClaude(g, l, iterationPrompt);
+      return runClaude(g, l, iterationPrompt, model);
     case 'codex':
-      return runCodex(g, l, iterationPrompt);
+      return runCodex(g, l, iterationPrompt, model);
     case 'mock':
-      return runMock(l, iterationPrompt);
+      return runMock(l, iterationPrompt, model);
     default:
       return { rc: 78, cls: 'apparatus', outputTail: `unsupported runtime '${l.runtime as string}' — add a shim branch` };
   }
@@ -48,8 +48,8 @@ export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: stri
 // Sessions get exactly the roster's MCP surface: Helm (with this loop's actor
 // identity) plus any extra servers the loop declares. --strict-mcp-config keeps
 // ambient user-scope servers out of headless sessions.
-function writeMcpConfig(g: GlobalConfig, l: LoopConfig, dir: string): string {
-  const helmEnv: Record<string, string> = { HELMO_ACTOR: JSON.stringify(loopActor(l)) };
+function writeMcpConfig(g: GlobalConfig, l: LoopConfig, dir: string, model: string): string {
+  const helmEnv: Record<string, string> = { HELMO_ACTOR: JSON.stringify(loopActor(l, model)) };
   if (g.helmo_db) helmEnv['HELMO_DB'] = g.helmo_db;
   const servers: Record<string, unknown> = {
     helmo: { command: 'node', args: [g.helmo_mcp_server], env: helmEnv },
@@ -62,11 +62,11 @@ function writeMcpConfig(g: GlobalConfig, l: LoopConfig, dir: string): string {
   return path;
 }
 
-function logTokens(l: LoopConfig, tokens?: number, cost?: number): void {
+function logTokens(l: LoopConfig, model: string, tokens?: number, cost?: number): void {
   try {
     appendFileSync(
       tokenLogPath(),
-      `${new Date().toISOString()} loop=${l.name} runtime=${l.runtime} model=${l.model} tokens=${tokens ?? '?'} cost_usd=${cost ?? '?'}\n`,
+      `${new Date().toISOString()} loop=${l.name} runtime=${l.runtime} model=${model} tokens=${tokens ?? '?'} cost_usd=${cost ?? '?'}\n`,
     );
   } catch {
     /* metering must never affect the run */
@@ -82,10 +82,10 @@ export function systemPrompt(l: LoopConfig): string {
   return parts.join('');
 }
 
-function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string): SessionResult {
+function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string): SessionResult {
   const scratch = mkdtempSync(join(tmpdir(), 'rev-'));
   try {
-    const mcpConfig = writeMcpConfig(g, l, scratch);
+    const mcpConfig = writeMcpConfig(g, l, scratch, model);
     let systemFile = l.constitution;
     if (l.skills?.length) {
       systemFile = join(scratch, 'system.md');
@@ -95,7 +95,7 @@ function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string): SessionResul
       'claude',
       [
         '-p', prompt,
-        '--model', l.model,
+        '--model', model,
         '--append-system-prompt-file', systemFile,
         '--strict-mcp-config', '--mcp-config', mcpConfig,
         '--dangerously-skip-permissions',
@@ -134,13 +134,13 @@ function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string): SessionResul
       // claude can exit 0 with is_error:true (e.g. auth failure) — never let
       // that pass as a clean iteration.
       if ((j as { is_error?: boolean }).is_error && res.status === 0) {
-        logTokens(l, tokens, cost);
+        logTokens(l, model, tokens, cost);
         return { rc: 1, cls: 'failure', tokens, cost_usd: cost, outputTail: tail.slice(-4000) };
       }
     } catch {
       /* non-JSON output: keep raw tail */
     }
-    logTokens(l, tokens, cost);
+    logTokens(l, model, tokens, cost);
     const rc = res.status ?? 1;
     return { rc, cls: rc === 0 ? 'ok' : 'failure', tokens, cost_usd: cost, outputTail: `${tail}\n${res.stderr ?? ''}`.slice(-4000) };
   } finally {
@@ -148,21 +148,21 @@ function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string): SessionResul
   }
 }
 
-function runCodex(_g: GlobalConfig, l: LoopConfig, prompt: string): SessionResult {
+function runCodex(_g: GlobalConfig, l: LoopConfig, prompt: string, model: string): SessionResult {
   // Ported shape from the prototype: ephemeral, no user config, last-message capture.
   const lastMsg = join(mkdtempSync(join(tmpdir(), 'rev-')), 'last.md');
   const res = spawnSync(
     'codex',
     [
       'exec', '--ephemeral', '--ignore-user-config', '--dangerously-bypass-approvals-and-sandbox',
-      '--output-last-message', lastMsg, '--model', l.model,
+      '--output-last-message', lastMsg, '--model', model,
       `${systemPrompt(l)}\n\n--- Iteration prompt ---\n\n${prompt}`,
     ],
     { cwd: l.cwd, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], maxBuffer: 32 * 1024 * 1024, env: cleanEnv() },
   );
   if (res.error) return { rc: 78, cls: 'apparatus', outputTail: `codex CLI not runnable: ${res.error.message}` };
   const tail = existsSync(lastMsg) ? readFileSync(lastMsg, 'utf8') : (res.stderr ?? '');
-  logTokens(l);
+  logTokens(l, model);
   const rc = res.status ?? 1;
   return { rc, cls: rc === 0 ? 'ok' : 'failure', outputTail: tail.slice(-4000) };
 }
@@ -171,12 +171,12 @@ function runCodex(_g: GlobalConfig, l: LoopConfig, prompt: string): SessionResul
 // the harness itself is testable (and installs verifiable) without an agent CLI
 // or tokens. The command's exit code flows through the ladder unchanged, so
 // tests can exercise every failure class.
-function runMock(l: LoopConfig, prompt: string): SessionResult {
+function runMock(l: LoopConfig, prompt: string, model: string): SessionResult {
   if (!l.mock_cmd) return { rc: 78, cls: 'apparatus', outputTail: "mock runtime requires 'mock_cmd' in the roster" };
   const res = spawnSync('bash', ['-c', l.mock_cmd], {
     cwd: l.cwd,
     encoding: 'utf8',
-    env: { ...cleanEnv(), REV_LOOP: l.name, REV_PROMPT: prompt, HELMO_ACTOR: JSON.stringify(loopActor(l)) },
+    env: { ...cleanEnv(), REV_LOOP: l.name, REV_PROMPT: prompt, REV_MODEL: model, HELMO_ACTOR: JSON.stringify(loopActor(l, model)) },
   });
   const rc = res.status ?? 1;
   const cls = rc === 0 ? 'ok' : rc === 75 ? 'transient' : rc === 78 ? 'apparatus' : 'failure';
@@ -186,6 +186,6 @@ function runMock(l: LoopConfig, prompt: string): SessionResult {
   const usage = /rev-mock-usage tokens=(\d+)(?: cost_usd=([\d.]+))?/.exec(res.stdout ?? '');
   const tokens = usage ? Number(usage[1]) : undefined;
   const cost = usage?.[2] ? Number(usage[2]) : undefined;
-  if (usage) logTokens(l, tokens, cost);
+  if (usage) logTokens(l, model, tokens, cost);
   return { rc, cls, tokens, cost_usd: cost, outputTail: `${res.stdout ?? ''}${res.stderr ?? ''}`.slice(-4000) };
 }

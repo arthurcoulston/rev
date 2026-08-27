@@ -120,6 +120,27 @@ export function breakerDecide(
   return { act: 'ok' };
 }
 
+// The probe tier (H-412; crew skills/model-selection.md). "Is there anything
+// to do?" is a fixed near-zero-judgement task, and running it at the loop's
+// working tier is pure waste — ward's cheapest sessions were exactly that
+// shape. The wake-check makes the case deterministic for a scoped loop:
+// nothing ready to draw AND nothing already in hand means the session ahead
+// can only read the queue and stop, so it runs on the probe model.
+//
+// held_count arrives only from a helmo that reports it; when it is missing the
+// answer is the working model — a probe misroute wastes cents, but real work
+// accidentally run on the small tier is a misroute of judgement. Store-wide
+// loops ('*') never probe: their motion-only wakes ARE the work (triage).
+export function probeDecide(c: {
+  probeModel: string | undefined;
+  workstream: string;
+  readyCount: number;
+  heldCount: number | undefined;
+}): string | null {
+  if (!c.probeModel || c.workstream === '*') return null;
+  return c.readyCount === 0 && c.heldCount === 0 ? c.probeModel : null;
+}
+
 // What to do about a transient API condition, now that rev can see which cap
 // it hit (H-402, using the H-278 poller).
 //

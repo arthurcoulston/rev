@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { breakerDecide, classifyExit, limitDecide, ladderDecide, respawnDecide, rollingMean, velocityToPause } from '../src/ladder.js';
+import { breakerDecide, classifyExit, limitDecide, ladderDecide, probeDecide, respawnDecide, rollingMean, velocityToPause } from '../src/ladder.js';
 
 const base = { produced: true, failStreak: 0, limitStreak: 0, failCap: 2, limitCap: 20, limitWait: 900 };
 
@@ -151,5 +151,29 @@ describe('limitDecide (H-402)', () => {
   it('a reset already past retries shortly rather than computing a negative wait', () => {
     const a = limitDecide({ ...base, exhausted: { label: 'session (5h)', percent: 100, resets_at: '2026-08-26T03:00:00Z' } });
     expect(a).toEqual({ act: 'limit_wait', waitSeconds: 60, attempt: 1 });
+  });
+});
+
+describe('probeDecide (H-412)', () => {
+  const small = 'claude-haiku-4-5-20251001';
+  const base = { probeModel: small, workstream: 'security', readyCount: 0, heldCount: 0 };
+
+  it('nothing ready and nothing in hand is the probe case', () => {
+    expect(probeDecide(base)).toBe(small);
+  });
+  it('ready work runs at the working tier', () => {
+    expect(probeDecide({ ...base, readyCount: 1 })).toBeNull();
+  });
+  it('work already in hand runs at the working tier — resuming an in_progress ticket is not a probe', () => {
+    expect(probeDecide({ ...base, heldCount: 1 })).toBeNull();
+  });
+  it('an unknown held_count (older helmo) never probes — misrouting real work is the worse mistake', () => {
+    expect(probeDecide({ ...base, heldCount: undefined })).toBeNull();
+  });
+  it('no probe model configured means no probe', () => {
+    expect(probeDecide({ ...base, probeModel: undefined })).toBeNull();
+  });
+  it("store-wide loops never probe: their motion-only wakes ARE the triage work", () => {
+    expect(probeDecide({ ...base, workstream: '*' })).toBeNull();
   });
 });

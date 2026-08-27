@@ -128,6 +128,43 @@ fi
     expect((events.match(/wake\s/g) ?? []).length).toBeGreaterThan(0);
   });
 
+  it('an empty-handed iteration runs on the probe model; one with work in reach does not (H-412)', () => {
+    // Iteration 1 has a ready ticket: working model. The mock claims and
+    // closes it, so iteration 2 finds nothing ready and nothing held — the
+    // probe case — and must run on the probe model, signed as such everywhere:
+    // the session env, the run-start event, and the token-log.
+    const e = setup(`[loops.probe-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+model = "working-model"
+probe_model = "probe-model"
+mock_cmd = '''
+set -e
+echo "MODEL:$REV_MODEL"
+ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -n "$ID" ]; then
+  node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
+  node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
+fi
+echo "rev-mock-usage tokens=100 cost_usd=0.01"
+'''
+`);
+    seedTicket(e, 'Work for the probe loop');
+    const out = rev(e, ['run', 'probe-loop', '--count', '2']);
+    expect(out).toContain('MODEL:working-model');
+    expect(out).toContain('MODEL:probe-model');
+    expect(out).toContain('run 2 started');
+
+    const events = readFileSync(join(e.home, 'state', 'probe-loop', 'events.log'), 'utf8');
+    expect(events).toMatch(/run-start\s+iter=1 seq=\d+\n/); // no probe tag with work ready
+    expect(events).toMatch(/run-start\s+iter=2 seq=\d+ probe=probe-model/);
+
+    const tokenLog = readFileSync(join(e.home, 'token-log'), 'utf8');
+    expect(tokenLog).toContain('model=working-model');
+    expect(tokenLog).toContain('model=probe-model');
+  });
+
   it('a loop that cannot reach Helm at all is declared wedged, not left polling (H-448)', async () => {
     // The 2026-08-27 outage in miniature: the helm-cli always fails, so every
     // wake-check throws. Before this, the loop logged politely once a minute

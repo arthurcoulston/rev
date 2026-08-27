@@ -7,6 +7,9 @@ import { GlobalConfig, LoopConfig } from './types.js';
 export interface WakeCheck {
   max_seq: number;
   ready_count: number;
+  /** in_progress tickets in the loop's own hands — absent from a helmo that
+   *  predates it, and absent for store-wide loops (no assignee in scope). */
+  held_count?: number;
   changed_since: boolean;
 }
 
@@ -26,8 +29,10 @@ function run(g: GlobalConfig, args: string[], actor?: object): unknown {
   return JSON.parse(out);
 }
 
-export function loopActor(l: LoopConfig): object {
-  return { name: l.name, kind: 'agent', model: l.model, version: l.version };
+// The actor's model field is the model actually running the session — a probe
+// iteration on the small tier must not sign the record as the working model.
+export function loopActor(l: LoopConfig, model?: string): object {
+  return { name: l.name, kind: 'agent', model: model ?? l.model, version: l.version };
 }
 
 export function revActor(): object {

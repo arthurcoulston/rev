@@ -6,7 +6,7 @@ import { WakeCheck, actorActivity, actorSelfSpend, actorTickets, escalateBlocked
 import { burnWindow, markBurnFloor } from './burn.js';
 import { exhaustedLimit, pollUsage, readUsage } from './usage.js';
 import { raiseWedgeAlarm, wedgeDecide } from './health.js';
-import { breakerDecide, ladderDecide, limitDecide, rollingMean, velocityToPause } from './ladder.js';
+import { breakerDecide, ladderDecide, limitDecide, probeDecide, rollingMean, velocityToPause } from './ladder.js';
 import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streak, streakReset } from './sentinels.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig } from './types.js';
@@ -119,8 +119,18 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     }
     i += 1;
     const started = Date.now();
-    logEvent(l.name, 'run-start', `iter=${i} seq=${before.max_seq}`);
-    console.log(`=== ${l.name} run ${i} started ${new Date().toISOString()} ===`);
+    // The probe tier (H-412): nothing ready and nothing in hand means this
+    // iteration can only read the queue and stop, so it runs on the cheap
+    // model. Decided per iteration from the fresh wake-check, never sticky.
+    const probe = probeDecide({
+      probeModel: l.probe_model,
+      workstream: l.workstream,
+      readyCount: before.ready_count,
+      heldCount: before.held_count,
+    });
+    const model = probe ?? l.model;
+    logEvent(l.name, 'run-start', `iter=${i} seq=${before.max_seq}${probe ? ` probe=${probe}` : ''}`);
+    console.log(`=== ${l.name} run ${i} started ${new Date().toISOString()}${probe ? ` (probe: ${probe})` : ''} ===`);
 
     // Steering disclosure up front (helmo H-55): a budget known before
     // planning changes what gets worked first; discovered at the end, it is
@@ -152,7 +162,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       steering +
       draw +
       `record progress honestly, then end the session. ${l.prompt ?? ''}`;
-    const res = runSession(g, l, prompt);
+    const res = runSession(g, l, prompt, model);
 
     const durSec = Math.round((Date.now() - started) / 1000);
     ({ window: durWindow, mean: tAvg } = rollingMean(durWindow, durSec));
@@ -196,7 +206,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           const cost = (res.cost_usd ?? 0) - (primaryGuess?.cost_usd ?? 0);
           if (tokens || cost) {
             const note =
-              `Metered by Rev: loop '${l.name}' iteration ${i} (${l.runtime}/${l.model}), whole session charged to this ticket` +
+              `Metered by Rev: loop '${l.name}' iteration ${i} (${l.runtime}/${model}), whole session charged to this ticket` +
               (rest.length ? `; session also touched ${rest.map((t) => t.id).join(', ')}` : '') +
               (primaryGuess
                 ? `; net of ${primaryGuess.tokens} tokens / $${primaryGuess.cost_usd.toFixed(2)} the agent self-reported here (the meter is authoritative)`
