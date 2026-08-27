@@ -131,12 +131,24 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       (ws?.budget_usd
         ? `Budget: $${ws.spent_usd.toFixed(2)} of $${ws.budget_usd.toFixed(2)} spent, $${(ws.remaining_usd ?? 0).toFixed(2)} remains. The budget is the plan — take the highest-value work first; if it is exhausted, close out honestly with residuals documented rather than starting more. `
         : '');
+    // Load the tools BEFORE the work, not when the need appears (H-448). An
+    // agent picks its tool set from a guess about the session ahead, and
+    // "I might need to file a ticket" is exactly what you discover halfway
+    // through. Across the fleet, 13% of sessions since 2026-08-20 started
+    // without create_ticket — and one of them, finding no tool for the job,
+    // reasoned its way into writing to Helmo's SQLite file by hand and wedged
+    // every loop in the estate for forty minutes.
+    const toolset =
+      `Load your full Helmo tool set before you start — create_ticket and return_to_human included, ` +
+      `because you will not know you need them until you do (ToolSearch 'select:mcp__helmo__helmo_create_ticket'). ` +
+      `A tool you did not load is never a reason to reach past Helmo: its store is guarded, and going around it once took the whole fleet down. `;
     const draw =
       l.workstream === '*'
         ? `Use your Helmo tools: first list tickets assigned to you, then survey fresh activity and unclaimed filings across all workstreams — your constitution says what your work is. Work to a natural stopping point, `
         : `Use your Helm tools: first list tickets assigned to you, then ready work in workstream '${l.workstream}'. Work ONE ticket to a natural stopping point, `;
     const prompt =
       `Loop iteration ${i} for agent '${l.name}'. Working directory: ${l.cwd}. ` +
+      toolset +
       steering +
       draw +
       `record progress honestly, then end the session. ${l.prompt ?? ''}`;

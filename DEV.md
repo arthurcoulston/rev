@@ -95,6 +95,14 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 - The supervisor never overrides a halt sentinel: STOP/HOLD/BLOCKED keep a
   loop down until an operator (or Helm answer) clears them; clearance is
   picked up within one poll.
+- **The iteration prompt loads the tools before the work** (H-448). An agent
+  picks its tool set from a guess about the session ahead, and "I might need to
+  file a ticket" is what you discover halfway through: 13% of loop sessions
+  since 2026-08-20 started without `create_ticket` — every loop, not one. One
+  of them found no tool for the job and reasoned its way into writing Helmo's
+  SQLite file by hand, wedging the whole fleet for forty minutes. The prompt now
+  names the tools to load up front and says plainly that a missing tool is never
+  grounds to go around Helmo.
 - **Production means work advanced, not bytes written** (H-412). The
   produced-check calls helm-cli `actor-activity --advancing`, so a note-only
   update does not count. It matters because `ladderDecide` returns `continue`
