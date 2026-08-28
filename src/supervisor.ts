@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { stateDir } from './config.js';
 import { respawnDecide } from './ladder.js';
 import { pollUsage } from './usage.js';
+import { rotateOpenFd } from './logretention.js';
 import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet } from './sentinels.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 
@@ -116,6 +117,10 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
 
     const poll = () => {
       for (const s of slots.values()) {
+        // Rotate the live console.log in place — a long-running loop never
+        // reopens its fd, so unbounded growth is only caught here, not at
+        // spawn (H-434).
+        if (s.child && s.fd !== null) rotateOpenFd(join(stateDir(s.cfg.name), 'console.log'), s.fd);
         if (s.child || shuttingDown) continue;
         const name = s.cfg.name;
         if (s.respawnAt !== null) {

@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, rmSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir } from './config.js';
+import { rotateIfOversized } from './logretention.js';
 import { Sentinel } from './types.js';
 
 // Sentinel files are the loop's operational state machine — the taxonomy is
@@ -57,8 +58,10 @@ export function streakReset(loop: string, ...names: string[]): void {
 // Structured operational trace — the watch officer's and dashboard's perception
 // surface. One timestamped line per launcher decision; append-only, best-effort.
 export function logEvent(loop: string, event: string, fields = ''): void {
+  const p = sPath(loop, 'events.log');
   try {
-    appendFileSync(sPath(loop, 'events.log'), `${new Date().toISOString()} ${event.padEnd(12)} ${fields}\n`);
+    rotateIfOversized(p);
+    appendFileSync(p, `${new Date().toISOString()} ${event.padEnd(12)} ${fields}\n`);
   } catch {
     /* a trace write must never affect the loop */
   }
