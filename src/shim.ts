@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tokenLogPath } from './config.js';
 import { loopActor } from './helm.js';
-import { GlobalConfig, LoopConfig, SessionResult } from './types.js';
+import { GlobalConfig, LoopConfig, ModelPrice, RunChoice, SessionResult } from './types.js';
 
 // Loop sessions get a clean environment: ambient agent-session variables
 // (a parent Claude/Codex session's proxy URLs, session ids, auth-refresh
@@ -23,9 +23,10 @@ export function cleanEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: string, model = l.model): SessionResult {
+export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: string, model = l.model, choice?: RunChoice): SessionResult {
+  const runtime = choice?.runtime ?? l.runtime;
   // Apparatus pre-flight, fail closed: never launch a half-instructed agent.
-  if (l.runtime !== 'mock') {
+  if (runtime !== 'mock') {
     if (!l.constitution || !existsSync(l.constitution) || statSync(l.constitution).size === 0) {
       return { rc: 78, cls: 'apparatus', outputTail: `constitution missing or empty: ${l.constitution}` };
     }
@@ -33,40 +34,72 @@ export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: stri
       if (!existsSync(s) || statSync(s).size === 0) return { rc: 78, cls: 'apparatus', outputTail: `skill missing or empty: ${s}` };
     }
   }
-  switch (l.runtime) {
+  switch (runtime) {
     case 'claude':
       return runClaude(g, l, iterationPrompt, model);
     case 'codex':
-      return runCodex(g, l, iterationPrompt, model);
+      return runCodex(g, l, iterationPrompt, model, choice);
     case 'mock':
       return runMock(l, iterationPrompt, model);
     default:
-      return { rc: 78, cls: 'apparatus', outputTail: `unsupported runtime '${l.runtime as string}' — add a shim branch` };
+      return { rc: 78, cls: 'apparatus', outputTail: `unsupported runtime '${runtime as string}' — add a shim branch` };
   }
 }
 
 // Sessions get exactly the roster's MCP surface: Helm (with this loop's actor
-// identity) plus any extra servers the loop declares. --strict-mcp-config keeps
-// ambient user-scope servers out of headless sessions.
-function writeMcpConfig(g: GlobalConfig, l: LoopConfig, dir: string, model: string): string {
+// identity) plus any extra servers the loop declares. Each adapter serializes
+// this one record its CLI's way and keeps ambient user-scope servers out.
+function mcpServers(g: GlobalConfig, l: LoopConfig, model: string): Record<string, Record<string, unknown>> {
   const helmEnv: Record<string, string> = { HELMO_ACTOR: JSON.stringify(loopActor(l, model)) };
   if (g.helmo_db) helmEnv['HELMO_DB'] = g.helmo_db;
-  const servers: Record<string, unknown> = {
+  const servers: Record<string, Record<string, unknown>> = {
     helmo: { command: 'node', args: [g.helmo_mcp_server], env: helmEnv },
   };
   if (l.mcp_extra && existsSync(l.mcp_extra)) {
-    Object.assign(servers, (JSON.parse(readFileSync(l.mcp_extra, 'utf8')) as { mcpServers?: Record<string, unknown> }).mcpServers ?? {});
+    Object.assign(servers, (JSON.parse(readFileSync(l.mcp_extra, 'utf8')) as { mcpServers?: Record<string, Record<string, unknown>> }).mcpServers ?? {});
   }
+  return servers;
+}
+
+function writeMcpConfig(g: GlobalConfig, l: LoopConfig, dir: string, model: string): string {
   const path = join(dir, 'mcp.json');
-  writeFileSync(path, JSON.stringify({ mcpServers: servers }));
+  writeFileSync(path, JSON.stringify({ mcpServers: mcpServers(g, l, model) }));
   return path;
 }
 
-function logTokens(l: LoopConfig, model: string, tokens?: number, cost?: number): void {
+// TOML basic-string escaping for the codex `-c` override. Values reaching this
+// carry JSON (the Helmo actor), so quotes and backslashes are the normal case.
+export function tomlString(s: string): string {
+  return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\t/g, '\\t').replace(/[\u0000-\u0008\u000b-\u001f]/g, '')}"`;
+}
+
+function tomlValue(v: unknown): string {
+  if (typeof v === 'string') return tomlString(v);
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (Array.isArray(v)) return `[${v.map(tomlValue).join(',')}]`;
+  if (v && typeof v === 'object') {
+    return `{${Object.entries(v as Record<string, unknown>).map(([k, val]) => `${k}=${tomlValue(val)}`).join(',')}}`;
+  }
+  return '""';
+}
+
+/** The whole-table `mcp_servers={...}` override: codex's equivalent of
+ *  --strict-mcp-config, since replacing the table drops ambient user-scope
+ *  servers. Every server gets tools auto-approved — a headless session runs
+ *  under `approval_policy = never`, where an unapproved MCP call hard-fails
+ *  instead of prompting (verified against codex 0.150.1, H-479). */
+export function codexMcpArg(servers: Record<string, Record<string, unknown>>): string {
+  const withApproval = Object.fromEntries(
+    Object.entries(servers).map(([name, s]) => [name, { default_tools_approval_mode: 'auto', ...s }]),
+  );
+  return `mcp_servers=${tomlValue(withApproval)}`;
+}
+
+function logTokens(l: LoopConfig, model: string, tokens?: number, cost?: number, runtime = l.runtime): void {
   try {
     appendFileSync(
       tokenLogPath(),
-      `${new Date().toISOString()} loop=${l.name} runtime=${l.runtime} model=${model} tokens=${tokens ?? '?'} cost_usd=${cost ?? '?'}\n`,
+      `${new Date().toISOString()} loop=${l.name} runtime=${runtime} model=${model} tokens=${tokens ?? '?'} cost_usd=${cost ?? '?'}\n`,
     );
   } catch {
     /* metering must never affect the run */
@@ -148,23 +181,102 @@ function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string
   }
 }
 
-function runCodex(_g: GlobalConfig, l: LoopConfig, prompt: string, model: string): SessionResult {
-  // Ported shape from the prototype: ephemeral, no user config, last-message capture.
-  const lastMsg = join(mkdtempSync(join(tmpdir(), 'rev-')), 'last.md');
+// What one codex exec --json run said, reduced to what rev needs. Pure, so the
+// wire format is tested without a CLI or tokens.
+export interface CodexRun {
+  threadId?: string;                  // keys the rollout file that carries rate_limits
+  tail: string;                       // last agent message
+  usage?: { input: number; cached: number; output: number };
+  turnCompleted: boolean;             // codex can exit 0 without finishing a turn — never trust rc alone
+  failure?: string;                   // turn.failed / error message, when one arrived
+}
+
+export function parseCodexEvents(stdout: string): CodexRun {
+  const run: CodexRun = { tail: '', turnCompleted: false };
+  for (const line of stdout.split('\n')) {
+    let e: Record<string, unknown>;
+    try {
+      e = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const type = String(e['type'] ?? '');
+    if (type === 'thread.started') run.threadId = String(e['thread_id'] ?? '') || undefined;
+    if (type === 'item.completed') {
+      const item = e['item'] as { type?: string; text?: string } | undefined;
+      if (item?.type === 'agent_message' && item.text) run.tail = item.text;
+    }
+    if (type === 'turn.completed') {
+      run.turnCompleted = true;
+      const u = (e['usage'] ?? {}) as Record<string, number>;
+      run.usage = {
+        input: u['input_tokens'] ?? 0,
+        cached: u['cached_input_tokens'] ?? 0,
+        output: (u['output_tokens'] ?? 0) + (u['reasoning_output_tokens'] ?? 0),
+      };
+    }
+    if (type === 'turn.failed' || type === 'error') {
+      run.failure = String((e['error'] as { message?: string } | undefined)?.message ?? e['message'] ?? 'unknown error');
+    }
+  }
+  return run;
+}
+
+// A plan-auth CLI reports no dollar cost, but the burn breaker and spend
+// write-back are calibrated in USD — so codex spend is priced notionally from
+// the roster's per-model prices. Cached input gets the standard 90% discount
+// unless the roster prices it explicitly.
+export function notionalCost(usage: { input: number; cached: number; output: number }, price?: ModelPrice): number | undefined {
+  if (!price) return undefined;
+  const cachedRate = price.cached_input ?? price.input / 10;
+  const usd = ((usage.input - usage.cached) * price.input + usage.cached * cachedRate + usage.output * price.output) / 1_000_000;
+  return Math.round(usd * 1e6) / 1e6;
+}
+
+const CODEX_LIMIT = /rate.?limit|too many requests|quota|usage.?limit|\b429\b|\boverloaded\b/i;
+
+function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, choice?: RunChoice): SessionResult {
+  // Same contract as runClaude, codex's way: prompt via stdin (a constitution
+  // in argv is world-readable via ps and bumps into argv limits), MCP via the
+  // whole-table -c override, results from the --json event stream. Approvals
+  // and sandbox off matches the claude posture — one permission story per
+  // fleet, whichever CLI runs the iteration.
   const res = spawnSync(
     'codex',
     [
-      'exec', '--ephemeral', '--ignore-user-config', '--dangerously-bypass-approvals-and-sandbox',
-      '--output-last-message', lastMsg, '--model', model,
-      `${systemPrompt(l)}\n\n--- Iteration prompt ---\n\n${prompt}`,
+      'exec', '--json', '--skip-git-repo-check',
+      '--dangerously-bypass-approvals-and-sandbox',
+      '--model', model,
+      '-c', codexMcpArg(mcpServers(g, l, model)),
+      '-',
     ],
-    { cwd: l.cwd, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], maxBuffer: 32 * 1024 * 1024, env: cleanEnv() },
+    {
+      cwd: l.cwd,
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024,
+      env: cleanEnv(),
+      input: `${systemPrompt(l)}\n\n--- Iteration prompt ---\n\n${prompt}`,
+    },
   );
   if (res.error) return { rc: 78, cls: 'apparatus', outputTail: `codex CLI not runnable: ${res.error.message}` };
-  const tail = existsSync(lastMsg) ? readFileSync(lastMsg, 'utf8') : (res.stderr ?? '');
-  logTokens(l, model);
-  const rc = res.status ?? 1;
-  return { rc, cls: rc === 0 ? 'ok' : 'failure', outputTail: tail.slice(-4000) };
+  const run = parseCodexEvents(res.stdout ?? '');
+  const tokens = run.usage ? run.usage.input + run.usage.output : undefined;
+  const cost = run.usage ? notionalCost(run.usage, choice?.prices?.[model]) : undefined;
+  logTokens(l, model, tokens, cost, 'codex');
+
+  // Transient detection: codex reports limits as failure text, not a status
+  // field — keep the message whole for limitDecide (the H-402 rule).
+  const limitText = run.failure && CODEX_LIMIT.test(run.failure) ? run.failure : res.status !== 0 && CODEX_LIMIT.test(res.stderr ?? '') ? (res.stderr ?? '') : null;
+  if (limitText) {
+    const message = limitText.slice(0, 2000);
+    return { rc: 75, cls: 'transient', limit: { status: 429, message }, tokens, cost_usd: cost, outputTail: `API limit: ${message}` };
+  }
+
+  const tail = `${run.tail || run.failure || ''}\n${res.stderr ?? ''}`.slice(-4000);
+  // rc 0 without a completed turn is a documented codex wart (openai/codex
+  // #19309): treat it as the failure it is.
+  const rc = res.status === 0 && (!run.turnCompleted || run.failure) ? 1 : (res.status ?? 1);
+  return { rc, cls: rc === 0 ? 'ok' : 'failure', tokens, cost_usd: cost, outputTail: tail };
 }
 
 // Mock runtime: runs a shell command with the loop's identity in env. Exists so
