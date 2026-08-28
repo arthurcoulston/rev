@@ -129,6 +129,7 @@ export function loadRoster(): Roster {
       constitution: l['constitution'] ? resolveHome(String(l['constitution'])) : '',
       version: String(l['version'] ?? '0.1'),
       pace: Number(l['pace'] ?? 1),
+      idle_floor_s: Number(l['idle_floor_s'] ?? 0),
       prompt: l['prompt'] ? String(l['prompt']) : undefined,
       mcp_extra: l['mcp_extra'] ? resolveHome(String(l['mcp_extra'])) : undefined,
       skills: Array.isArray(l['skills']) ? (l['skills'] as unknown[]).map((s) => resolveHome(String(s))) : undefined,

@@ -61,6 +61,7 @@ export interface LoopConfig {
   constitution: string;    // path, relative to rev home or absolute
   version: string;         // loop version — part of the actor identity
   pace: number;            // velocity fraction (0,1]
+  idle_floor_s: number;    // min seconds idle before a wake is honored; 0 = immediate (H-336/H-545)
   prompt?: string;         // iteration prompt tail
   mcp_extra?: string;      // optional path to JSON with additional MCP servers
   skills?: string[];       // crew skill files appended to the constitution at spawn (H-247)
@@ -85,5 +86,5 @@ export interface SessionResult {
   outputTail: string; // last lines of session output, for traces and escalations
 }
 
-export const SENTINELS = ['STOP', 'HOLD', 'BLOCKED', 'LIMIT', 'IDLE', 'RUNNING', 'PACE', 'PARKED', 'BACKOFF', 'WEDGED'] as const;
+export const SENTINELS = ['STOP', 'HOLD', 'BLOCKED', 'LIMIT', 'IDLE', 'IDLE_AT', 'RUNNING', 'PACE', 'PARKED', 'BACKOFF', 'WEDGED'] as const;
 export type Sentinel = (typeof SENTINELS)[number];

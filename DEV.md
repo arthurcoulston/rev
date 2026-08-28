@@ -18,7 +18,13 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   unscoped but fires on MOTION ONLY (changed_since, never ready_count — the
   whole store's standing backlog would wake a judge every poll forever), no
   steering fetch, and the prompt defers to the constitution instead of naming
-  a stream or the ONE-ticket rule. After
+  a stream or the ONE-ticket rule. Per-loop `idle_floor_s` holds wakes after
+  an unproductive pass: motion accumulates but cannot re-wake the loop until
+  the floor elapses (H-336: a live desk session woke ward ~$1/2min against an
+  empty queue; H-545: bosun's own sweep records were the motion that woke it,
+  16 straight iterations to the burn breaker). The '*' prompt also tells a
+  no-change pass to end WITHOUT filing or noting — its own exhaust is fresh
+  motion, so a no-change record re-wakes the loop it closes. After
   each iteration it writes the session's metered spend back to the
   most-touched ticket via helm-cli `record-spend` (H-19) — as the rev
   actor, since Rev is the meter, not the spender — net of anything the agent

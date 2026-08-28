@@ -12,6 +12,7 @@ import { Sentinel } from './types.js';
 //   BLOCKED  rev→human: cap exceeded / unrecoverable; escalated as a Helm ticket
 //   LIMIT    rev: parked on a transient external condition, retrying
 //   IDLE     rev: waiting on the wake cursor (contents = Helm event seq)
+//   IDLE_AT  rev: epoch-ms the loop went idle; wakes held until idle_floor_s elapses (H-336)
 //   RUNNING  rev: pid + start stamp of the live loop process
 //   PACE     operator/agent: velocity command ("park" or fraction (0,1])
 //   PARKED   loop: acknowledgment that it has actually parked (command != state)

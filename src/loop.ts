@@ -104,8 +104,14 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       // fresh activity, and standing ready backlog anywhere in the store would
       // otherwise wake them every poll, forever.
       const wake = l.workstream === '*' ? w.changed_since : w.ready_count > 0 || w.changed_since;
-      if (wake) {
+      // Idle floor (H-336/H-545): an unproductive pass costs the same whatever
+      // it finds, and both burn incidents were wakes minutes apart from a live
+      // desk session or the loop's own exhaust. Motion accumulates while held —
+      // nothing is lost; the wake fires once the floor has elapsed.
+      const idleAt = parseInt(sGet(l.name, 'IDLE_AT') ?? '', 10) || 0;
+      if (wake && (l.idle_floor_s <= 0 || Date.now() - idleAt >= l.idle_floor_s * 1000)) {
         sClear(l.name, 'IDLE');
+        sClear(l.name, 'IDLE_AT');
         logEvent(l.name, 'wake', `since=${since} ready=${w.ready_count}`);
       } else {
         await sleep(g.poll_seconds);
@@ -169,7 +175,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       `A tool you did not load is never a reason to reach past Helmo: its store is guarded, and going around it once took the whole fleet down. `;
     const draw =
       l.workstream === '*'
-        ? `Use your Helmo tools: first list tickets assigned to you, then survey fresh activity and unclaimed filings across all workstreams — your constitution says what your work is. Work to a natural stopping point, `
+        ? `Use your Helmo tools: first list tickets assigned to you, then survey fresh activity and unclaimed filings across all workstreams — your constitution says what your work is. If nothing has materially changed since your last pass, end the session WITHOUT filing a ticket or writing a note: producing nothing is the idle signal this loop reads, and a no-change sweep record is itself fresh motion that wakes you again (H-545). Otherwise work to a natural stopping point, `
         : `Use your Helm tools: first list tickets assigned to you, then ready work in workstream '${l.workstream}'. Work ONE ticket to a natural stopping point, `;
     const prompt =
       `Loop iteration ${i} for agent '${l.name}'. Working directory: ${l.cwd}. ` +
@@ -336,6 +342,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         const after = tryWakeCheck(g, l, 0);
         const cursor = after?.max_seq ?? before.max_seq;
         sSet(l.name, 'IDLE', String(cursor));
+        sSet(l.name, 'IDLE_AT', String(Date.now()));
         console.log(`rev: no production this iteration — IDLE at seq ${cursor}.`);
         break;
       }
