@@ -4,12 +4,12 @@
 import { stateDir } from './config.js';
 import { WakeCheck, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, recordSpend, scopeLabel, wakeCheck, workstreamInfo } from './helm.js';
 import { burnWindow, markBurnFloor } from './burn.js';
-import { exhaustedLimit, pollUsage, readUsage } from './usage.js';
+import { exhaustedLimit, pollUsage, readCodexUsage, readUsage } from './usage.js';
 import { raiseWedgeAlarm, wedgeDecide } from './health.js';
-import { breakerDecide, ladderDecide, limitDecide, probeDecide, rollingMean, velocityToPause } from './ladder.js';
+import { breakerDecide, choiceDecide, ladderDecide, limitDecide, probeDecide, rollingMean, velocityToPause } from './ladder.js';
 import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streak, streakReset } from './sentinels.js';
 import { runSession } from './shim.js';
-import { GlobalConfig, LoopConfig } from './types.js';
+import { GlobalConfig, LoopConfig, RunChoice } from './types.js';
 
 const sleep = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
 
@@ -57,7 +57,8 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   process.on('SIGINT', () => process.exit(130));
   process.on('SIGTERM', () => process.exit(143));
 
-  console.log(`rev: loop '${l.name}' | ${scopeLabel(l)} | ${l.runtime}/${l.model} | cwd ${l.cwd}`);
+  const cycle = l.choices.map((c) => `${c.provider}/${c.model}`).join(' ⇄ ');
+  console.log(`rev: loop '${l.name}' | ${scopeLabel(l)} | ${cycle} | cwd ${l.cwd}`);
   console.log(`rev: state ${dir} — stop it with: rev stop ${l.name}`);
   logEvent(l.name, 'loop-start', `pid=${process.pid} count=${opts.count ?? 0}`);
 
@@ -119,18 +120,30 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     }
     i += 1;
     const started = Date.now();
+    // Which provider runs this iteration (H-479): the rotation cycle at this
+    // position, skipping any provider whose cap the fresh snapshot says is
+    // out, then fallbacks. Decided per iteration, never sticky.
+    const exhaustedChoice = (c: RunChoice) =>
+      c.runtime === 'mock' ? false : Boolean(exhaustedLimit(c.runtime === 'codex' ? readCodexUsage() : readUsage(), g.limit_exhausted_percent));
+    const sel = choiceDecide({ choices: l.choices, fallbacks: l.fallbacks, iteration: i, exhausted: exhaustedChoice });
+    const choice = sel.choice;
+    if (sel.switched) {
+      logEvent(l.name, 'provider-switch', `iter=${i} ${sel.switched}`);
+      console.log(`rev: ${sel.switched}`);
+    }
     // The probe tier (H-412): nothing ready and nothing in hand means this
     // iteration can only read the queue and stop, so it runs on the cheap
-    // model. Decided per iteration from the fresh wake-check, never sticky.
+    // model. Decided per iteration from the fresh wake-check, never sticky —
+    // and it probes on the provider actually chosen for the iteration.
     const probe = probeDecide({
-      probeModel: l.probe_model,
+      probeModel: choice.probe_model,
       workstream: l.workstream,
       readyCount: before.ready_count,
       heldCount: before.held_count,
     });
-    const model = probe ?? l.model;
-    logEvent(l.name, 'run-start', `iter=${i} seq=${before.max_seq}${probe ? ` probe=${probe}` : ''}`);
-    console.log(`=== ${l.name} run ${i} started ${new Date().toISOString()}${probe ? ` (probe: ${probe})` : ''} ===`);
+    const model = probe ?? choice.model;
+    logEvent(l.name, 'run-start', `iter=${i} seq=${before.max_seq} provider=${choice.provider}${probe ? ` probe=${probe}` : ''}`);
+    console.log(`=== ${l.name} run ${i} started ${new Date().toISOString()} (${choice.provider}/${model}${probe ? ', probe' : ''}) ===`);
 
     // Steering disclosure up front (helmo H-55): a budget known before
     // planning changes what gets worked first; discovered at the end, it is
@@ -149,8 +162,10 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     // reasoned its way into writing to Helmo's SQLite file by hand and wedged
     // every loop in the estate for forty minutes.
     const toolset =
-      `Load your full Helmo tool set before you start — create_ticket and return_to_human included, ` +
-      `because you will not know you need them until you do (ToolSearch 'select:mcp__helmo__helmo_create_ticket'). ` +
+      (choice.runtime === 'claude'
+        ? `Load your full Helmo tool set before you start — create_ticket and return_to_human included, ` +
+          `because you will not know you need them until you do (ToolSearch 'select:mcp__helmo__helmo_create_ticket'). `
+        : `Your Helmo tools (helmo_*) are already loaded — create_ticket and return_to_human included; use them for all work tracking. `) +
       `A tool you did not load is never a reason to reach past Helmo: its store is guarded, and going around it once took the whole fleet down. `;
     const draw =
       l.workstream === '*'
@@ -162,7 +177,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       steering +
       draw +
       `record progress honestly, then end the session. ${l.prompt ?? ''}`;
-    const res = runSession(g, l, prompt, model);
+    const res = runSession(g, l, prompt, model, choice);
 
     const durSec = Math.round((Date.now() - started) / 1000);
     ({ window: durWindow, mean: tAvg } = rollingMean(durWindow, durSec));
@@ -206,7 +221,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           const cost = (res.cost_usd ?? 0) - (primaryGuess?.cost_usd ?? 0);
           if (tokens || cost) {
             const note =
-              `Metered by Rev: loop '${l.name}' iteration ${i} (${l.runtime}/${model}), whole session charged to this ticket` +
+              `Metered by Rev: loop '${l.name}' iteration ${i} (${choice.provider}/${model}), whole session charged to this ticket` +
               (rest.length ? `; session also touched ${rest.map((t) => t.id).join(', ')}` : '') +
               (primaryGuess
                 ? `; net of ${primaryGuess.tokens} tokens / $${primaryGuess.cost_usd.toFixed(2)} the agent self-reported here (the meter is authoritative)`
@@ -234,7 +249,8 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     // every 429 got the same twenty blind fifteen-minute retries, which is how
     // 2026-08-26 became 34-42 hours of silence.
     if (res.cls === 'transient') {
-      const snap = g.usage_poll_seconds > 0 ? await pollUsage() : readUsage();
+      const snap =
+        choice.runtime === 'codex' ? readCodexUsage() : g.usage_poll_seconds > 0 ? await pollUsage() : readUsage();
       const ex = exhaustedLimit(snap, g.limit_exhausted_percent);
       if (ex) logEvent(l.name, 'limit-identified', `cap="${ex.label}" percent=${ex.percent} resets=${ex.resets_at ?? '-'}`);
       action = limitDecide({
@@ -245,6 +261,21 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         exhausted: ex ? { label: ex.label, percent: ex.percent, resets_at: ex.resets_at } : null,
         message: res.limit?.message,
       });
+      // An identified cap with another provider still standing is a switch,
+      // not a wait and not a block (H-479): the next iteration's choiceDecide
+      // skips the exhausted provider because the same snapshot that named the
+      // cap here is the one it reads. An unidentified transient (a 529, an
+      // outage) keeps the ladder — switching providers over a network blip
+      // would turn every wobble into a migration.
+      if (ex && action.act !== 'continue') {
+        const alt = choiceDecide({ choices: l.choices, fallbacks: l.fallbacks, iteration: i + 1, exhausted: exhaustedChoice });
+        if (alt.choice.provider !== choice.provider && !exhaustedChoice(alt.choice)) {
+          logEvent(l.name, 'limit-switch', `cap="${ex.label}" — continuing on ${alt.choice.provider}/${alt.choice.model}`);
+          console.log(`rev: cap "${ex.label}" is out — continuing on ${alt.choice.provider}/${alt.choice.model}.`);
+          streakReset(l.name, 'limit');
+          action = { act: 'continue' };
+        }
+      }
     }
 
     // Burn breaker (H-412). The ladder judges how the iteration ended; this

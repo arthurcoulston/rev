@@ -1,12 +1,12 @@
-// Pure decision functions for the failure ladder and pacing — no side effects,
-// unit-tested in isolation. The classifications encode the prototype's
-// hard-won lessons:
+// Pure decision functions for the failure ladder, provider selection, and
+// pacing — no side effects, unit-tested in isolation. The classifications
+// encode the prototype's hard-won lessons:
 //  - transient (API 429/529, network outage) is NEVER a failure: park and
 //    retry; a rescuer launched into the same dead API dies with the patient.
 //  - apparatus faults (missing constitution, unresolvable runtime) fail closed
 //    immediately — never retry a half-instructed agent.
 //  - runtime failures get a small consecutive cap, then a human.
-import { ExitClass } from './types.js';
+import { ExitClass, RunChoice } from './types.js';
 
 // Exit-code contract with the runtime shim (ports the prototype's):
 //   0 = clean; 75 = transient external condition; 78 = apparatus fault.
@@ -139,6 +139,34 @@ export function probeDecide(c: {
 }): string | null {
   if (!c.probeModel || c.workstream === '*') return null;
   return c.readyCount === 0 && c.heldCount === 0 ? c.probeModel : null;
+}
+
+// Which provider runs this iteration (H-479; crew skills/model-selection.md).
+// The scheduled choice is the rotation cycle at the iteration's position —
+// "every other run" falls out of a two-entry cycle. A provider whose cap the
+// fresh snapshot says is out is skipped: first the rest of the cycle in order,
+// then the fallbacks. When everything is out, the scheduled choice is returned
+// unswitched and the transient ladder does what it always did — this function
+// never invents availability.
+export function choiceDecide(c: {
+  choices: RunChoice[];
+  fallbacks: RunChoice[];
+  iteration: number; // 1-based
+  exhausted: (choice: RunChoice) => boolean;
+}): { choice: RunChoice; switched?: string } {
+  const n = c.choices.length;
+  const at = ((c.iteration - 1) % n + n) % n;
+  const scheduled = c.choices[at]!;
+  const candidates = [...c.choices.slice(at), ...c.choices.slice(0, at), ...c.fallbacks];
+  for (const cand of candidates) {
+    if (c.exhausted(cand)) continue;
+    if (cand === scheduled) return { choice: scheduled };
+    return {
+      choice: cand,
+      switched: `'${scheduled.provider}' cap is out — switched to ${cand.provider}/${cand.model}`,
+    };
+  }
+  return { choice: scheduled };
 }
 
 // What to do about a transient API condition, now that rev can see which cap

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { exhaustedLimit, parseUsage, usageLine, worstSeverity } from '../src/usage.js';
+import { exhaustedLimit, parseCodexRateLimits, parseUsage, usageLine, worstSeverity } from '../src/usage.js';
 
 // The real wire shape, captured from api/oauth/usage on 2026-08-27. The
 // endpoint is undocumented, so this fixture is the contract: if a future
@@ -58,7 +58,7 @@ describe('usageLine', () => {
   });
 
   it('says so when it never polled, and when the numbers are old', () => {
-    expect(usageLine(null)).toBe('Max usage: not polled yet');
+    expect(usageLine(null)).toBe('Max usage: not read yet');
     const stale = { ...parseUsage(LIVE), stale: true };
     expect(usageLine(stale)).toContain('STALE');
   });
@@ -96,5 +96,62 @@ describe('exhaustedLimit (H-402)', () => {
     const s = { ...parseUsage(LIVE), stale: true };
     s.limits[2]!.percent = 100;
     expect(exhaustedLimit(s)).toBeNull();
+  });
+});
+
+describe('parseCodexRateLimits (H-479)', () => {
+  // The real wire shape, captured from a codex-cli 0.150.1 rollout file's
+  // token_count event on 2026-08-27. Like LIVE above, this fixture is the
+  // contract with an undocumented format.
+  const ROLLOUT_RL = {
+    limit_id: 'codex',
+    limit_name: null,
+    primary: { used_percent: 12.5, window_minutes: 10080, resets_at: 1788497906 },
+    secondary: null,
+    credits: { has_credits: false, unlimited: false, balance: '0' },
+    individual_limit: null,
+    spend_control_reached: null,
+    plan_type: 'prolite',
+    rate_limit_reached_type: null,
+  };
+
+  it('maps windows to the snapshot shape, naming the plan', () => {
+    const s = parseCodexRateLimits(ROLLOUT_RL, '2026-08-28T05:00:00.000Z');
+    expect(s.stale).toBe(false);
+    expect(s.limits).toHaveLength(1);
+    expect(s.limits[0]).toMatchObject({
+      kind: 'codex_primary',
+      label: 'codex weekly [prolite]',
+      percent: 12.5,
+      severity: 'unknown',
+      resets_at: '2026-09-04T04:58:26.000Z',
+      active: false,
+    });
+  });
+
+  it('keeps only parsed values — same posture as the Claude snapshot (H-298)', () => {
+    const s = parseCodexRateLimits(ROLLOUT_RL);
+    for (const l of s.limits) {
+      expect(Object.keys(l).sort()).toEqual(['active', 'kind', 'label', 'percent', 'resets_at', 'severity']);
+    }
+    expect(JSON.stringify(s)).not.toContain('credits');
+  });
+
+  it('a reached cap is the endpoint speaking: fullest window goes critical, so exhaustedLimit sees it', () => {
+    const s = parseCodexRateLimits({
+      ...ROLLOUT_RL,
+      primary: { used_percent: 41, window_minutes: 300, resets_at: 1788497906 },
+      secondary: { used_percent: 87, window_minutes: 10080, resets_at: 1788497906 },
+      rate_limit_reached_type: 'secondary',
+    });
+    expect(s.limits.map((l) => l.severity)).toEqual(['unknown', 'critical']);
+    expect(s.limits.every((l) => l.active)).toBe(true);
+    expect(exhaustedLimit(s)?.kind).toBe('codex_secondary');
+  });
+
+  it('survives a shape it has never seen rather than throwing', () => {
+    expect(parseCodexRateLimits(null).limits).toEqual([]);
+    expect(parseCodexRateLimits({}).limits).toEqual([]);
+    expect(parseCodexRateLimits({ primary: {} }).limits[0]).toMatchObject({ percent: 0, resets_at: null });
   });
 });

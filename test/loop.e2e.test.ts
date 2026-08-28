@@ -157,8 +157,8 @@ echo "rev-mock-usage tokens=100 cost_usd=0.01"
     expect(out).toContain('run 2 started');
 
     const events = readFileSync(join(e.home, 'state', 'probe-loop', 'events.log'), 'utf8');
-    expect(events).toMatch(/run-start\s+iter=1 seq=\d+\n/); // no probe tag with work ready
-    expect(events).toMatch(/run-start\s+iter=2 seq=\d+ probe=probe-model/);
+    expect(events).toMatch(/run-start\s+iter=1 seq=\d+ provider=\S+\n/); // no probe tag with work ready
+    expect(events).toMatch(/run-start\s+iter=2 seq=\d+ provider=\S+ probe=probe-model/);
 
     const tokenLog = readFileSync(join(e.home, 'token-log'), 'utf8');
     expect(tokenLog).toContain('model=working-model');

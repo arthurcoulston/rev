@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { breakerDecide, classifyExit, limitDecide, ladderDecide, probeDecide, respawnDecide, rollingMean, velocityToPause } from '../src/ladder.js';
+import { breakerDecide, choiceDecide, classifyExit, limitDecide, ladderDecide, probeDecide, respawnDecide, rollingMean, velocityToPause } from '../src/ladder.js';
 
 const base = { produced: true, failStreak: 0, limitStreak: 0, failCap: 2, limitCap: 20, limitWait: 900 };
 
@@ -175,5 +175,48 @@ describe('probeDecide (H-412)', () => {
   });
   it("store-wide loops never probe: their motion-only wakes ARE the triage work", () => {
     expect(probeDecide({ ...base, workstream: '*' })).toBeNull();
+  });
+});
+
+describe('choiceDecide (H-479)', () => {
+  const claude = { provider: 'claude', runtime: 'claude' as const, model: 'c-mid' };
+  const codex = { provider: 'codex', runtime: 'codex' as const, model: 'x-mid' };
+  const fall = { provider: 'codex', runtime: 'codex' as const, model: 'x-small' };
+  const never = () => false;
+
+  it('a one-entry cycle always schedules that entry', () => {
+    for (const i of [1, 2, 7]) {
+      expect(choiceDecide({ choices: [claude], fallbacks: [], iteration: i, exhausted: never }).choice).toBe(claude);
+    }
+  });
+
+  it('a two-entry cycle alternates every other run', () => {
+    const c = { choices: [claude, codex], fallbacks: [], exhausted: never };
+    expect(choiceDecide({ ...c, iteration: 1 }).choice).toBe(claude);
+    expect(choiceDecide({ ...c, iteration: 2 }).choice).toBe(codex);
+    expect(choiceDecide({ ...c, iteration: 3 }).choice).toBe(claude);
+  });
+
+  it('an exhausted provider is skipped for the rest of the cycle, and says so', () => {
+    const sel = choiceDecide({
+      choices: [claude, codex], fallbacks: [], iteration: 1,
+      exhausted: (c) => c.provider === 'claude',
+    });
+    expect(sel.choice).toBe(codex);
+    expect(sel.switched).toContain("'claude' cap is out");
+  });
+
+  it('fallbacks are tried after the cycle, in order', () => {
+    const sel = choiceDecide({
+      choices: [claude], fallbacks: [fall], iteration: 4,
+      exhausted: (c) => c.provider === 'claude',
+    });
+    expect(sel.choice).toBe(fall);
+  });
+
+  it('everything exhausted returns the scheduled choice unswitched — the ladder decides, not this', () => {
+    const sel = choiceDecide({ choices: [claude, codex], fallbacks: [fall], iteration: 2, exhausted: () => true });
+    expect(sel.choice).toBe(codex);
+    expect(sel.switched).toBeUndefined();
   });
 });
