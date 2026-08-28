@@ -26,14 +26,18 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   totals exactly once. Each guess is cancelled on the ticket that carries it
   and the meter lands on the primary alone (H-187) — a session-wide
   correction once left a ticket at −62k beside a neighbour's +80k guess.
-- `usage.ts` — Max-plan usage bars from the undocumented
+- `usage.ts` — usage bars per provider. Claude: the undocumented
   `api.anthropic.com/api/oauth/usage` (H-278; security design approved in
-  H-280, landed-code check is H-298). The supervisor polls every 10 min and
-  writes `~/.rev/usage.json`; `rev usage [--poll]`, `rev status` and the view
-  header read it. Parse the `limits` array, not the top-level `five_hour` /
-  `seven_day` objects: it is self-describing and it NAMES the model a scoped
-  weekly cap belongs to, which is the only way the Fable cap is legible rather
-  than an opaque codename. Every failure is soft — keep the last numbers, mark
+  H-280, landed-code check is H-298), polled by the supervisor every 10 min
+  into `~/.rev/usage.json`. Parse the `limits` array, not the top-level
+  `five_hour` / `seven_day` objects: it is self-describing and it NAMES the
+  model a scoped weekly cap belongs to, which is the only way the Fable cap is
+  legible rather than an opaque codename. Codex: no poller and no credential
+  (H-479) — every `codex exec` run writes its rate-limit standing into its own
+  rollout file under `$CODEX_HOME/sessions`, and the shim lifts the freshest
+  block into `~/.rev/usage-codex.json` after each run, so the numbers are as
+  fresh as the last iteration. `rev usage [--poll]`, `rev status` and the view
+  header read both. Every failure is soft — keep the last numbers, mark
   stale, back off; nothing in rev may wait on a usage bar.
 - `health.ts` — fleet-down detection (H-448). A failing wake-check is modelled
   as "no news, try next poll", which is right for contention and wrong for
@@ -49,9 +53,20 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   of tripping again on money already accounted for (H-412).
 - `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent
-  CLAUDE/ANTHROPIC env — the auth-leak fix; don't weaken it), per-session token
-  metering, transient-API detection, and `--strict-mcp-config` (sessions see
-  ONLY Helmo + the loop's `mcp_extra`).
+  CLAUDE/ANTHROPIC/CODEX env — the auth-leak fix; don't weaken it), per-session
+  token metering, transient-API detection, and the strict MCP surface (sessions
+  see ONLY Helmo + the loop's `mcp_extra`): claude via `--strict-mcp-config`,
+  codex via the whole-table `-c mcp_servers={...}` override (H-479). Codex
+  gotchas the adapter encodes, all verified on codex-cli 0.150.1: the prompt
+  goes in on stdin (`exec -`) because argv is ps-readable and size-capped;
+  `--ignore-user-config` silently drops `-c`-supplied MCP servers, so it is
+  not used; MCP tools need `default_tools_approval_mode = "auto"` AND the
+  approvals/sandbox bypass or every call hard-fails under `approval_policy =
+  never`; exit 0 without a `turn.completed` event is a real failure
+  (openai/codex #19309), so results are gated on the event stream; codex under
+  plan auth reports no dollar cost, so cost is notional from the roster's
+  `[providers.codex.prices]` — absent prices, the burn breaker is blind to
+  that provider and the token-log shows `cost_usd=?`.
 - `ladder.ts` — pure decision functions for the failure ladder (transient ≠
   failure ≠ apparatus). Unit-tested; change with tests.
 - `supervisor.ts` — the fleet (v1, H-18): one child process per roster loop
@@ -68,7 +83,16 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 - `sentinels.ts` / `config.ts` — sentinel files + roster loading. A loop's
   optional `skills = [...]` (paths) are appended whole to its constitution at
   spawn — how a Drive-touching loop carries crew `skills/file-stewardship.md`
-  (H-247); a missing skill fails the session closed like a missing constitution. Instance data
+  (H-247); a missing skill fails the session closed like a missing constitution.
+  Providers (H-479): `[providers.<name>]` is an adapter plus the operator's
+  tier→model table (and prices) — the machine copy of crew
+  `skills/model-selection.md`; model names live in the roster, never in rev's
+  code, so name churn is a roster edit. A loop says `provider` + `tier`
+  (`probe_tier` for the probe pass) or the v0 `runtime` + `model` strings;
+  `rotation = ["claude", "codex"]` alternates providers per iteration and
+  `fallback = ["codex:mid"]` names where to run when every scheduled
+  provider's cap is out. All references resolve at load and fail the roster
+  loudly. Instance data
   lives in `~/.rev/` (roster.toml, mcp/, state/<loop>/, token-log), NEVER
   in this repo — publishability is structural.
 - `view.ts` — read-only machine dashboard at :4500. `cli.ts` — run / status /
@@ -140,6 +164,16 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   An unknown `held_count` (older helmo) never probes — real work misrouted to
   the small tier is the worse mistake — and store-wide loops never probe:
   their motion-only wakes ARE the triage work.
+- **A provider choice is decided fresh each iteration, never sticky** (H-479).
+  `choiceDecide` takes the rotation cycle at the iteration's position, skips
+  any provider whose cap the fresh snapshot says is out (then fallbacks), and
+  when everything is out returns the scheduled choice so the transient ladder
+  — not the selector — decides what stopping looks like. On an IDENTIFIED cap
+  with another provider standing, the transient path switches instead of
+  waiting or blocking; an unidentified transient (529, outage) keeps the
+  ladder, so a network wobble never becomes a migration. The probe pass runs
+  on the provider actually chosen. The actor identity, token-log, run-start
+  event, and spend note all carry the provider/model actually used.
 - **The burn breaker is a ceiling, not a pacer** (H-412). It checks only
   `continue` iterations — every other ladder action is already stopping — and
   trips to BLOCKED with the usual escalation, so a runaway reaches Arthur's

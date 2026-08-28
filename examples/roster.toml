@@ -16,15 +16,46 @@ helmo_mcp_server = "/path/to/helm/dist/server.js"
 # respawn_backoff_cap_seconds = 900  # supervisor: backoff ceiling
 # min_uptime_seconds = 60            # supervisor: exits younger than this count as unhealthy
 
+# Providers: where work can run. Each is an adapter (runtime) plus the
+# operator's tier→model table — the machine copy of the crew's
+# skills/model-selection.md table. Model names churn; keeping them here (never
+# in rev's code) makes churn a roster edit. 'claude' and 'codex' default their
+# runtime; a new provider names the adapter it rides (see [providers.kimi]).
+# Prices ($/MTok) give notional cost where the CLI reports none (codex under
+# plan auth) — without them the burn breaker cannot see that provider's spend.
+[providers.claude.models]
+small = "claude-haiku-4-5-20251001"
+mid = "claude-sonnet-5"
+frontier = "claude-opus-5"
+
+[providers.codex.models]
+small = "gpt-5.6-luna"
+mid = "gpt-5.6-terra"
+frontier = "gpt-5.6-sol"
+
+[providers.codex.prices]
+"gpt-5.6-luna" = { input = 0.20, output = 1.20 }
+"gpt-5.6-terra" = { input = 2.0, output = 12.0 }
+"gpt-5.6-sol" = { input = 5.0, output = 30.0 }
+
+# A future provider is a table entry naming its adapter:
+# [providers.kimi]
+# runtime = "codex"                   # rides the codex adapter against a custom endpoint
+# [providers.kimi.models]
+# mid = "kimi-k2"
+
 # A worker loop. The name is also its Helm actor identity.
 [loops.example-worker]
 workstream = "my-workstream"          # which Helm workstream it draws from
 cwd = "~/projects/my-project"         # sessions run here; any folder on the machine
-runtime = "claude"                    # claude | codex | mock
-model = "claude-sonnet-5"
+provider = "claude"                   # a [providers.*] name (or the v0 form: runtime = "claude" + model = "...")
+tier = "mid"                          # from the run-type table in crew skills/model-selection.md
+probe_tier = "small"                  # empty-handed iterations run here (H-412)
 constitution = "constitutions/example-worker.md"  # relative to ~/.rev
 version = "0.1"                       # bump when the constitution changes — it's provenance
 pace = 1.0                            # velocity fraction; 0.5 = half speed
+# rotation = ["claude", "codex"]      # alternate providers per iteration, same tier ("codex:small" pins a tier)
+# fallback = ["codex:mid"]            # tried when every scheduled provider's cap is out
 # prompt = "Extra per-iteration instructions appended to the standard prompt."
 # mcp_extra = "mcp/example-worker.json"  # additional MCP servers for this loop's sessions
 
