@@ -7,6 +7,7 @@
 // until an operator clears it — the poll picks the loop back up within
 // poll_seconds of `rev resume`.
 import { spawn, ChildProcess } from 'node:child_process';
+import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { closeSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir } from './config.js';
@@ -48,6 +49,8 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
 
   const slots = new Map<string, Slot>();
   let shuttingDown = false;
+  let drainAt = 0;
+  const lineage = ancestryStamp();
 
   return new Promise<void>((resolve) => {
     const finishIfDrained = () => {
@@ -116,6 +119,26 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
     };
 
     const poll = () => {
+      // Orphan watchdog (H-281): a launchd supervisor has an empty lineage
+      // that can never break; a shell- or wrapper-started one whose recorded
+      // ancestor chain breaks has lost its operator. Drain rather than run
+      // unattended — the 2026-08-28 swarm was ~28 such trees, some driving
+      // duplicate fleets against the live store for six days.
+      if (!shuttingDown && ancestryBroken(lineage)) {
+        logEvent(SUP, 'orphaned', `lineage [${lineage.join(' < ')}] broken`);
+        drain('orphaned');
+      }
+      // Drain escalation (H-281): past the grace a straggler is wedged, and a
+      // drain that never ends gets an operator kill -9 and leaves orphans.
+      if (shuttingDown && drainAt && g.drain_grace_seconds > 0 && Date.now() - drainAt > g.drain_grace_seconds * 1000) {
+        for (const s of slots.values()) {
+          if (s.child) {
+            logEvent(SUP, 'drain-kill', `loop=${s.cfg.name} pid=${s.child.pid}`);
+            s.child.kill('SIGKILL');
+          }
+        }
+        drainAt = 0; // once; exit events finish the drain
+      }
       for (const s of slots.values()) {
         // Rotate the live console.log in place — a long-running loop never
         // reopens its fd, so unbounded growth is only caught here, not at
@@ -152,6 +175,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
     const drain = (sig: string) => {
       if (shuttingDown) return;
       shuttingDown = true;
+      drainAt = Date.now();
       logEvent(SUP, 'drain', `signal=${sig}`);
       console.log(`rev: ${sig} — draining the fleet (in-flight iterations finish their close-out).`);
       for (const s of slots.values()) s.child?.kill('SIGTERM');

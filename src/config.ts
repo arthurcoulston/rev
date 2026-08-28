@@ -37,6 +37,10 @@ const GLOBAL_DEFAULTS = {
   // Five consecutive failures is five minutes at the default poll — long past
   // contention, and short enough that nobody loses an afternoon (H-448).
   wedge_cap: 5,
+  // Drain escalation (H-281): a drain that waits forever on a wedged child
+  // ends with an operator kill -9 and an orphan. Past the grace, SIGKILL.
+  // Generous because in-flight iterations legitimately run minutes.
+  drain_grace_seconds: 600,
 };
 
 export interface Roster {

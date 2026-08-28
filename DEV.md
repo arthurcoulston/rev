@@ -45,6 +45,16 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   fresh as the last iteration. `rev usage [--poll]`, `rev status` and the view
   header read both. Every failure is soft — keep the last numbers, mark
   stale, back off; nothing in rev may wait on a usage bar.
+- `ancestry.ts` — abandoned-tree detection (H-281). Every loop and the
+  supervisor stamp their ancestor chain at start and self-terminate (loop:
+  exit between iterations; supervisor: drain) when any link dies or is
+  reparented. A direct ppid check is NOT enough — the 2026-08-28 swarm
+  (~28 orphaned dev trees, some racing the live store for six days) died at
+  the SHELL above the tsx wrapper, leaving every inner ppid link intact. A
+  launchd-parented supervisor has an empty chain that can never break, so
+  deliberate daemons go through `rev service`, never nohup. Drains also
+  escalate: past `drain_grace_seconds` a straggler is SIGKILLed rather than
+  waited on forever (a hung drain ends in an operator kill -9 and orphans).
 - `health.ts` — fleet-down detection (H-448). A failing wake-check is modelled
   as "no news, try next poll", which is right for contention and wrong for
   anything permanent; past `wedge_cap` consecutive failures the loop is marked

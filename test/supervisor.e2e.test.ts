@@ -164,4 +164,33 @@ mock_cmd = "true"
       proc.kill('SIGKILL');
     }
   });
+
+  it('an abandoned tree drains itself: killing an ancestor takes the whole fleet down (H-281)', { timeout: 60000 }, async () => {
+    const e = setup(`[loops.stray]
+workstream = "ws-stray"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+`);
+    const { proc } = startFleet(e);
+    try {
+      await waitFor(() => loopPid(e, 'stray') !== null, 'loop up');
+      expect(loopPid(e, 'supervisor')).not.toBeNull();
+      // Kill only the outermost wrapper (npx). The real supervisor and its
+      // loop survive with every inner ppid link intact — the exact shape of
+      // the 2026-08-28 orphan swarm. The lineage watchdog must notice the
+      // broken chain and drain the whole tree.
+      proc.kill('SIGKILL');
+      await waitFor(() => loopPid(e, 'supervisor') === null && loopPid(e, 'stray') === null, 'orphaned tree self-terminated', 30000);
+      const log = readFileSync(join(e.home, 'state', 'supervisor', 'events.log'), 'utf8');
+      expect(log).toContain('orphaned');
+      expect(log).toMatch(/fleet-stop\s+drained/);
+    } finally {
+      // If the watchdog failed, reap the real pids so the suite leaves no swarm.
+      for (const n of ['supervisor', 'stray']) {
+        const p = loopPid(e, n);
+        if (p) process.kill(p, 'SIGKILL');
+      }
+    }
+  });
 });

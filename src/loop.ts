@@ -8,6 +8,7 @@ import { exhaustedLimit, pollUsage, readCodexUsage, readUsage } from './usage.js
 import { raiseWedgeAlarm, wedgeDecide } from './health.js';
 import { breakerDecide, choiceDecide, ladderDecide, limitDecide, probeDecide, rollingMean, velocityToPause } from './ladder.js';
 import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streak, streakReset } from './sentinels.js';
+import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig, RunChoice } from './types.js';
 
@@ -65,8 +66,20 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   let i = 0;
   let durWindow: number[] = [];
   let tAvg = 0;
+  const lineage = ancestryStamp();
 
   while (true) {
+    // Orphan watchdog (H-281): a broken ancestor chain is the one unforgeable
+    // sign nobody who started this loop is still watching it — a SIGKILLed
+    // supervisor, or a dead shell above a surviving tsx wrapper (the
+    // 2026-08-28 swarm: ~28 such trees iterating on old code for days, every
+    // ppid link inside them intact). Checked between iterations, so an
+    // in-flight session always finishes its close-out first (H-467).
+    if (ancestryBroken(lineage)) {
+      logEvent(l.name, 'orphaned', `lineage [${lineage.join(' < ')}] broken runs=${i}`);
+      console.log(`rev: lineage broken (an ancestor died) — loop '${l.name}' exiting.`);
+      return;
+    }
     // Halt sentinels, checked at the top so an operator signal between
     // iterations always wins.
     for (const s of ['STOP', 'HOLD', 'BLOCKED'] as const) {
