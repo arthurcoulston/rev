@@ -20,12 +20,41 @@ export interface GlobalConfig {
   wedge_cap: number;                    // consecutive wake-check failures before a loop is declared wedged; 0 disables (H-448)
 }
 
+export type Runtime = 'claude' | 'codex' | 'mock';
+
+// A provider is a place work can run: an adapter (runtime) plus the operator's
+// tier→model table for it. Model names live in the roster, never in rev's code
+// — the crew's model-selection skill is the human copy of the same table, and
+// name churn must stay a roster edit, not a release.
+export interface ProviderConfig {
+  name: string;
+  runtime: Runtime;
+  models: Record<string, string>;        // tier -> model name
+  prices?: Record<string, ModelPrice>;   // model -> $/MTok, for notional metering when the CLI reports no cost
+}
+
+export interface ModelPrice {
+  input: number;         // $/MTok
+  output: number;
+  cached_input?: number; // default input/10 — the common cache discount
+}
+
+// One fully resolved way to run an iteration: the adapter, the provider it is
+// billed against, and the models for the working and probe passes.
+export interface RunChoice {
+  provider: string;
+  runtime: Runtime;
+  model: string;
+  probe_model?: string;
+  prices?: Record<string, ModelPrice>;
+}
+
 export interface LoopConfig {
   name: string;
   workstream: string;
   cwd: string;
-  runtime: 'claude' | 'codex' | 'mock';
-  model: string;
+  runtime: Runtime;        // primary adapter (derived from 'provider' when that is set)
+  model: string;           // primary working model (resolved from 'tier' when that is set)
   probe_model?: string;    // model for probe iterations — nothing ready, nothing held (H-412)
   constitution: string;    // path, relative to rev home or absolute
   version: string;         // loop version — part of the actor identity
@@ -37,6 +66,9 @@ export interface LoopConfig {
   burn_usd_per_hour?: number;  // breaker overrides for this loop (else the global)
   burn_usd_per_day?: number;
   continue_cap?: number;
+  // Provider-general selection (H-479; crew skills/model-selection.md).
+  choices: RunChoice[];    // the rotation cycle; length 1 when no rotation is set
+  fallbacks: RunChoice[];  // tried in order when every scheduled choice's cap is out
 }
 
 // Session outcome classes, in the ladder's terms.
