@@ -2,7 +2,7 @@
 // Deliberately plain read-only dashboard: the machine at a glance.
 // Helm shows the work; this shows the loops that do it.
 import { createServer } from 'node:http';
-import { readUsage, usageLine, worstSeverity } from './usage.js';
+import { readCodexUsage, readUsage, usageLine, worstSeverity } from './usage.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { revHome, loadRoster, stateDir, tokenLogPath } from './config.js';
@@ -94,7 +94,8 @@ createServer((_req, res) => {
     h1 span { color: #999; font-weight: normal; font-size: 15px; }
   </style>
   <h1>Rev <span>the machine, read-only · supervisor ${pidAlive('supervisor') ? `running (pid ${pidAlive('supervisor')})` : 'down'} · home ${esc(revHome())} · work lives in <a href="http://localhost:4400">Helm</a></span></h1>
-  <p class="usage ${worstSeverity(readUsage())}">${esc(usageLine(readUsage()))}</p>
+  <p class="usage ${worstSeverity(readUsage())}">${esc(usageLine(readUsage(), 'Claude'))}</p>
+  <p class="usage ${worstSeverity(readCodexUsage())}">${esc(usageLine(readCodexUsage(), 'Codex'))}</p>
   <table><tr><th>Loop</th><th>State</th><th>Workstream</th><th>Runtime</th><th>Pace</th><th>Spend</th><th>Recent trace</th></tr>
   ${rows || '<tr><td colspan="7">No loops in the roster yet.</td></tr>'}</table>`);
 }).listen(port, host, () => console.log(`Rev view (read-only): http://localhost:${port} — home: ${revHome()}`));

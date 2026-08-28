@@ -22,8 +22,9 @@
 // an error, or a crash dump. `usage.json` holds PARSED values only — agents
 // read it into prompts, so no raw upstream text passes through.
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { revHome } from './config.js';
 
 const ENDPOINT = 'https://api.anthropic.com/api/oauth/usage';
@@ -153,11 +154,11 @@ export async function pollUsage(): Promise<UsageSnapshot> {
 }
 
 /** One line for a dashboard or a status command. */
-export function usageLine(s: UsageSnapshot | null): string {
-  if (!s) return 'Max usage: not polled yet';
-  if (!s.limits.length) return `Max usage: unavailable${s.stale ? ' (stale)' : ''}`;
+export function usageLine(s: UsageSnapshot | null, label = 'Max'): string {
+  if (!s) return `${label} usage: not read yet`;
+  if (!s.limits.length) return `${label} usage: unavailable${s.stale ? ' (stale)' : ''}`;
   const parts = s.limits.map((l) => `${l.label} ${l.percent}%${l.resets_at ? ` (resets ${l.resets_at.slice(5, 16).replace('T', ' ')})` : ''}`);
-  return `Max usage: ${parts.join(' · ')}${s.stale ? ' — STALE, last good read' : ''}`;
+  return `${label} usage: ${parts.join(' · ')}${s.stale ? ' — STALE, last good read' : ''}`;
 }
 
 /** The worst thing the snapshot says, for anyone deciding whether to care.
@@ -180,4 +181,119 @@ export function exhaustedLimit(s: UsageSnapshot | null, atPercent = 95): UsageLi
   const hit = s.limits.filter((l) => l.percent >= atPercent || l.severity === 'critical');
   if (!hit.length) return null;
   return hit.reduce((worst, l) => (l.percent > worst.percent ? l : worst));
+}
+
+// ---------------------------------------------------------------------------
+// Codex usage. No poller and no credential: every `codex exec` run writes its
+// own rate-limit standing (used_percent, window, reset) into the session's
+// rollout file under $CODEX_HOME/sessions, so the freshest numbers are read
+// off disk after each run and parked in usage-codex.json in the same parsed
+// shape the Claude snapshot uses. Verified against codex-cli 0.150.1 (H-479).
+
+export function codexUsagePath(): string {
+  return join(revHome(), 'usage-codex.json');
+}
+
+function codexHome(): string {
+  return process.env['CODEX_HOME'] ?? join(homedir(), '.codex');
+}
+
+interface CodexRateLimitWindow {
+  used_percent?: number;
+  window_minutes?: number;
+  resets_at?: number; // epoch seconds
+}
+
+interface CodexRateLimits {
+  primary?: CodexRateLimitWindow | null;
+  secondary?: CodexRateLimitWindow | null;
+  plan_type?: string | null;
+  rate_limit_reached_type?: string | null;
+}
+
+function codexWindowLabel(minutes: number | undefined): string {
+  if (minutes === 300) return 'codex session (5h)';
+  if (minutes === 10080) return 'codex weekly';
+  return minutes ? `codex ${Math.round(minutes / 60)}h window` : 'codex window';
+}
+
+/** Map codex's rate_limits block to the snapshot shape. Pure, tested without
+ *  a CLI. A non-null rate_limit_reached_type is the endpoint itself saying a
+ *  cap bound, so the fullest window is marked critical — otherwise severity
+ *  stays unknown and the percent does the talking. */
+export function parseCodexRateLimits(raw: unknown, now = new Date().toISOString()): UsageSnapshot {
+  const rl = (raw ?? {}) as CodexRateLimits;
+  const limits: UsageLimit[] = [];
+  for (const [kind, w] of [['codex_primary', rl.primary], ['codex_secondary', rl.secondary]] as const) {
+    if (!w || typeof w !== 'object') continue;
+    limits.push({
+      kind,
+      label: rl.plan_type ? `${codexWindowLabel(w.window_minutes)} [${rl.plan_type}]` : codexWindowLabel(w.window_minutes),
+      percent: Number(w.used_percent ?? 0),
+      severity: 'unknown',
+      resets_at: w.resets_at ? new Date(w.resets_at * 1000).toISOString() : null,
+      active: Boolean(rl.rate_limit_reached_type),
+    });
+  }
+  if (rl.rate_limit_reached_type && limits.length) {
+    const worst = limits.reduce((a, l) => (l.percent > a.percent ? l : a));
+    worst.severity = 'critical';
+  }
+  return { fetched_at: now, stale: false, limits };
+}
+
+export function readCodexUsage(): UsageSnapshot | null {
+  const p = codexUsagePath();
+  if (!existsSync(p)) return null;
+  try {
+    return JSON.parse(readFileSync(p, 'utf8')) as UsageSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+/** Find the rollout file a codex exec run left behind. Rollouts are filed by
+ *  local date, so a run that straddles midnight lands in yesterday's folder —
+ *  both days are checked. */
+function findRollout(threadId: string, now = new Date()): string | null {
+  for (const daysBack of [0, 1]) {
+    const d = new Date(now.getTime() - daysBack * 86_400_000);
+    const dir = join(
+      codexHome(), 'sessions',
+      String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'),
+    );
+    if (!existsSync(dir)) continue;
+    const hit = readdirSync(dir).find((f) => f.endsWith(`-${threadId}.jsonl`));
+    if (hit) return join(dir, hit);
+  }
+  return null;
+}
+
+/** After a codex run: lift the freshest rate_limits from its rollout into
+ *  usage-codex.json. Soft on every failure — a usage bar is guidance, and
+ *  nothing in rev may stop for it (the H-278 posture, unchanged). */
+export function recordCodexUsage(threadId: string | undefined): UsageSnapshot | null {
+  try {
+    if (!threadId) return null;
+    const rollout = findRollout(threadId);
+    if (!rollout) return null;
+    const lines = readFileSync(rollout, 'utf8').split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      let e: Record<string, unknown>;
+      try {
+        e = JSON.parse(lines[i]!) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const payload = e['payload'] as { type?: string; rate_limits?: unknown } | undefined;
+      if (e['type'] === 'event_msg' && payload?.type === 'token_count' && payload.rate_limits) {
+        const snap = parseCodexRateLimits(payload.rate_limits);
+        writeFileSync(codexUsagePath(), JSON.stringify(snap, null, 1) + '\n');
+        return snap;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }

@@ -7,6 +7,7 @@ import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, rmSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tokenLogPath } from './config.js';
+import { recordCodexUsage } from './usage.js';
 import { loopActor } from './helm.js';
 import { GlobalConfig, LoopConfig, ModelPrice, RunChoice, SessionResult } from './types.js';
 
@@ -263,6 +264,7 @@ function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string,
   const tokens = run.usage ? run.usage.input + run.usage.output : undefined;
   const cost = run.usage ? notionalCost(run.usage, choice?.prices?.[model]) : undefined;
   logTokens(l, model, tokens, cost, 'codex');
+  recordCodexUsage(run.threadId); // freshest cap standing, straight off this run's rollout
 
   // Transient detection: codex reports limits as failure text, not a status
   // field — keep the message whole for limitDecide (the H-402 rule).

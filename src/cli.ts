@@ -2,7 +2,7 @@
 // rev — run and control loops. Control verbs are sentinel writes; anything
 // that reads state is safe from any context (the watch officer uses these).
 import { loadRoster, stateDir } from './config.js';
-import { pollUsage, readUsage, usageLine, usagePath } from './usage.js';
+import { pollUsage, readCodexUsage, readUsage, usageLine, usagePath } from './usage.js';
 import { runLoop } from './loop.js';
 import { serviceInstall, serviceStart, serviceStatusLine, serviceUninstall } from './service.js';
 import { logEvent, pidAlive, sClear, sGet, sHas, sSet } from './sentinels.js';
@@ -64,7 +64,8 @@ switch (cmd) {
   case 'status': {
     const sup = pidAlive('supervisor');
     console.log(`supervisor: ${sup ? `running (pid ${sup})` : 'down — start the machine with: rev run'}`);
-    console.log(`${usageLine(readUsage())}\n`);
+    console.log(usageLine(readUsage(), 'Claude'));
+    console.log(`${usageLine(readCodexUsage(), 'Codex')}\n`);
     console.log('LOOP                     STATE      PID     PACE   WORKSTREAM');
     for (const name of Object.keys(loops)) {
       const pid = pidAlive(name) ?? '-';
@@ -139,16 +140,19 @@ switch (cmd) {
     break;
   }
   case 'usage': {
-    // Max-plan bars (H-278). --poll forces a fresh read; bare prints the last
-    // snapshot, which is what the supervisor keeps current.
+    // Claude bars are polled (H-278; --poll forces a fresh read); codex bars
+    // are written by each codex run from its own rollout, so they are as fresh
+    // as the last iteration and need no credential.
     const snap = rest.includes('--poll') ? await pollUsage() : readUsage();
-    console.log(usageLine(snap));
-    if (snap?.limits.length) {
-      for (const l of snap.limits) {
-        console.log(`  ${l.label.padEnd(26)} ${String(l.percent).padStart(3)}%  ${l.severity.padEnd(8)} ${l.active ? 'active' : ''}  resets ${l.resets_at ?? '-'}`);
+    for (const [label, s] of [['Claude', snap], ['Codex', readCodexUsage()]] as const) {
+      console.log(usageLine(s, label));
+      if (s?.limits.length) {
+        for (const l of s.limits) {
+          console.log(`  ${l.label.padEnd(26)} ${String(l.percent).padStart(3)}%  ${l.severity.padEnd(8)} ${l.active ? 'active' : ''}  resets ${l.resets_at ?? '-'}`);
+        }
       }
+      if (s?.stale) console.log(`  STALE — last read failed (${s.error ?? 'no reason recorded'}); these are the last good numbers.`);
     }
-    if (snap?.stale) console.log(`  STALE — last read failed (${snap.error ?? 'no reason recorded'}); these are the last good numbers.`);
     if (!snap) console.log(`  Nothing at ${usagePath()} yet. The supervisor polls every 10 min; 'rev usage --poll' reads now.`);
     break;
   }
