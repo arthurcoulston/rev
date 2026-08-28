@@ -109,12 +109,13 @@ export function loadRoster(): Roster {
   const rawLoops = (raw['loops'] ?? {}) as Record<string, Record<string, unknown>>;
   for (const [name, l] of Object.entries(rawLoops)) {
     if (name === 'supervisor') throw new Error("'supervisor' is a reserved name (the fleet supervisor's own state dir).");
+    const selection = resolveSelection(name, l, providers);
+    const allMock = [...selection.choices, ...selection.fallbacks].every((c) => c.runtime === 'mock');
     for (const key of ['workstream', 'cwd', 'constitution']) {
-      if (l[key] === undefined && !(l['runtime'] === 'mock' && key === 'constitution')) {
+      if (l[key] === undefined && !(allMock && key === 'constitution')) {
         throw new Error(`Loop '${name}' in roster.toml is missing '${key}'.`);
       }
     }
-    const selection = resolveSelection(name, l, providers);
     loops[name] = {
       name,
       workstream: String(l['workstream']),

@@ -165,6 +165,41 @@ echo "rev-mock-usage tokens=100 cost_usd=0.01"
     expect(tokenLog).toContain('model=probe-model');
   });
 
+  it('a rotation alternates providers every other run, signed everywhere (H-479)', () => {
+    // Two mock providers on the same tier: iteration 1 runs provider-a,
+    // iteration 2 runs provider-b — visible in the session env, the run-start
+    // events, and the token-log. The seeded ticket keeps both iterations
+    // waking (the mock never claims it), which is all rotation needs.
+    const e = setup(`[providers.prov-a]
+runtime = "mock"
+[providers.prov-a.models]
+mid = "model-a"
+[providers.prov-b]
+runtime = "mock"
+[providers.prov-b.models]
+mid = "model-b"
+[loops.rotator]
+workstream = "rev-test"
+cwd = "/tmp"
+provider = "prov-a"
+tier = "mid"
+rotation = ["prov-a", "prov-b"]
+mock_cmd = "echo MODEL:$REV_MODEL; echo 'rev-mock-usage tokens=10 cost_usd=0.01'"
+`);
+    seedTicket(e, 'Work for the rotator');
+    const out = rev(e, ['run', 'rotator', '--count', '2']);
+    expect(out).toContain('MODEL:model-a');
+    expect(out).toContain('MODEL:model-b');
+
+    const events = readFileSync(join(e.home, 'state', 'rotator', 'events.log'), 'utf8');
+    expect(events).toMatch(/run-start\s+iter=1 seq=\d+ provider=prov-a/);
+    expect(events).toMatch(/run-start\s+iter=2 seq=\d+ provider=prov-b/);
+
+    const tokenLog = readFileSync(join(e.home, 'token-log'), 'utf8');
+    expect(tokenLog).toContain('model=model-a');
+    expect(tokenLog).toContain('model=model-b');
+  });
+
   it('a loop that cannot reach Helm at all is declared wedged, not left polling (H-448)', async () => {
     // The 2026-08-27 outage in miniature: the helm-cli always fails, so every
     // wake-check throws. Before this, the loop logged politely once a minute
