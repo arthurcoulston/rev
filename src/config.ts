@@ -64,6 +64,7 @@ function parseProviders(raw: Record<string, unknown>): Record<string, ProviderCo
       runtime,
       models: (p['models'] ?? {}) as Record<string, string>,
       prices: p['prices'] as Record<string, ModelPrice> | undefined,
+      config: p['config'] as Record<string, unknown> | undefined,
     };
   }
   for (const [name, runtime] of Object.entries(BUILTIN_PROVIDERS)) {
@@ -87,7 +88,7 @@ function resolveRef(
   if (!model) throw new Error(`${where}: provider '${name}' has no model for tier '${tier}' — add it to [providers.${name}.models].`);
   const probe = defaults.probe_tier ? p.models[defaults.probe_tier] : undefined;
   if (defaults.probe_tier && !probe) throw new Error(`${where}: provider '${name}' has no model for probe_tier '${defaults.probe_tier}'.`);
-  return { provider: name!, runtime: p.runtime, model, probe_model: probe, prices: p.prices };
+  return { provider: name!, runtime: p.runtime, model, probe_model: probe, prices: p.prices, config: p.config };
 }
 
 export function loadRoster(): Roster {
@@ -171,6 +172,7 @@ function resolveSelection(
       model: String(l['model'] ?? 'mock'),
       probe_model: l['probe_model'] ? String(l['probe_model']) : probeFromTier,
       prices: p?.prices,
+      config: p?.config,
     };
   } else if (providerName && tier) {
     primary = resolveRef(providerName, providers, defaults, where);

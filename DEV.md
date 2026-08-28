@@ -59,8 +59,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   codex via the whole-table `-c mcp_servers={...}` override (H-479). Codex
   gotchas the adapter encodes, all verified on codex-cli 0.150.1: the prompt
   goes in on stdin (`exec -`) because argv is ps-readable and size-capped;
-  `--ignore-user-config` silently drops `-c`-supplied MCP servers, so it is
-  not used; MCP tools need `default_tools_approval_mode = "auto"` AND the
+  `--ignore-user-config` is always passed (H-520) — fleet behavior must not
+  change when the operator tweaks `~/.codex/config.toml` (auth.json and
+  session rollouts are unaffected); anything a run needs beyond the MCP table
+  arrives as `-c` overrides from `[providers.<name>.config]` in the roster
+  (reasoning effort, future custom endpoints via `model_providers`); MCP
+  tools need `default_tools_approval_mode = "auto"` AND the
   approvals/sandbox bypass or every call hard-fails under `approval_policy =
   never`; exit 0 without a `turn.completed` event is a real failure
   (openai/codex #19309), so results are gated on the event stream; codex under

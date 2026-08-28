@@ -96,11 +96,15 @@ mid = "x-mid"
     expect(() => loadRoster()).toThrow(/needs either 'model'.*or 'tier'/);
   });
 
-  it('a future provider is a table entry naming its adapter', () => {
-    home(LOOP + 'provider = "kimi"\ntier = "mid"\n', TABLES + '[providers.kimi]\nruntime = "codex"\n[providers.kimi.models]\nmid = "k2"\n');
+  it('a future provider is a table entry naming its adapter, with config riding along (H-520)', () => {
+    home(
+      LOOP + 'provider = "kimi"\ntier = "mid"\n',
+      TABLES + '[providers.kimi]\nruntime = "codex"\n[providers.kimi.models]\nmid = "k2"\n[providers.kimi.config]\nmodel_reasoning_effort = "low"\n',
+    );
     const l = loadRoster().loops['a']!;
     expect(l.runtime).toBe('codex'); // kimi rides the codex adapter
     expect(l.choices[0]!.provider).toBe('kimi');
     expect(l.model).toBe('k2');
+    expect(l.choices[0]!.config).toEqual({ model_reasoning_effort: 'low' });
   });
 });

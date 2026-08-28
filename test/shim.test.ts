@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { codexMcpArg, notionalCost, parseCodexEvents, tomlString } from '../src/shim.js';
+import { codexArgs, codexMcpArg, notionalCost, parseCodexEvents, tomlString } from '../src/shim.js';
 import { parse } from 'smol-toml';
 
 // Real event lines captured from codex exec --json (codex-cli 0.150.1,
@@ -84,5 +84,24 @@ describe('codex MCP override (H-479)', () => {
   it('escapes quotes, backslashes, and newlines; strips raw control bytes', () => {
     expect(tomlString('a"b\\c\nd\te')).toBe('"a\\"b\\\\c\\nd\\te"');
     expect(tomlString('xy')).toBe('"xy"');
+  });
+});
+
+describe('codexArgs (H-520)', () => {
+  it('is hermetic: user config ignored, everything explicit, prompt on stdin', () => {
+    const args = codexArgs('gpt-5.6-terra', 'mcp_servers={}');
+    expect(args).toContain('--ignore-user-config');
+    expect(args).toContain('--json');
+    expect(args[args.length - 1]).toBe('-');
+    expect(args[args.indexOf('--model') + 1]).toBe('gpt-5.6-terra');
+  });
+  it('provider config entries become -c overrides in roster order', () => {
+    const args = codexArgs('m', 'mcp_servers={}', { model_reasoning_effort: 'medium', model_providers: { or: { base_url: 'https://x', wire_api: 'responses' } } });
+    const cs = args.filter((_, i) => args[i - 1] === '-c');
+    expect(cs).toEqual([
+      'mcp_servers={}',
+      'model_reasoning_effort="medium"',
+      'model_providers={or={base_url="https://x",wire_api="responses"}}',
+    ]);
   });
 });

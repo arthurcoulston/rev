@@ -236,6 +236,27 @@ export function notionalCost(usage: { input: number; cached: number; output: num
 
 const CODEX_LIMIT = /rate.?limit|too many requests|quota|usage.?limit|\b429\b|\boverloaded\b/i;
 
+/** The full argv for one codex run. Pure, so the flag set is tested without a
+ *  CLI. `--ignore-user-config` is the hermetic fleet home (H-520): fleet
+ *  behavior must not change when the operator tweaks the desk config — the
+ *  reasoning-effort, notify, and plugin settings in ~/.codex/config.toml all
+ *  stay out, while auth.json and session rollouts are unaffected (verified on
+ *  codex-cli 0.150.1; an earlier belief that this flag broke -c MCP servers
+ *  was a misread — that failure was a malformed HELMO_ACTOR). Everything a
+ *  fleet run needs arrives as explicit -c overrides: the MCP table, then the
+ *  provider's [providers.<name>.config] entries — reasoning effort today,
+ *  custom endpoints (model_providers) when a provider needs one. */
+export function codexArgs(model: string, mcpArg: string, config?: Record<string, unknown>): string[] {
+  return [
+    'exec', '--json', '--skip-git-repo-check', '--ignore-user-config',
+    '--dangerously-bypass-approvals-and-sandbox',
+    '--model', model,
+    '-c', mcpArg,
+    ...Object.entries(config ?? {}).flatMap(([k, v]) => ['-c', `${k}=${tomlValue(v)}`]),
+    '-',
+  ];
+}
+
 function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, choice?: RunChoice): SessionResult {
   // Same contract as runClaude, codex's way: prompt via stdin (a constitution
   // in argv is world-readable via ps and bumps into argv limits), MCP via the
@@ -244,13 +265,7 @@ function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string,
   // fleet, whichever CLI runs the iteration.
   const res = spawnSync(
     'codex',
-    [
-      'exec', '--json', '--skip-git-repo-check',
-      '--dangerously-bypass-approvals-and-sandbox',
-      '--model', model,
-      '-c', codexMcpArg(mcpServers(g, l, model)),
-      '-',
-    ],
+    codexArgs(model, codexMcpArg(mcpServers(g, l, model)), choice?.config),
     {
       cwd: l.cwd,
       encoding: 'utf8',

@@ -31,6 +31,7 @@ export interface ProviderConfig {
   runtime: Runtime;
   models: Record<string, string>;        // tier -> model name
   prices?: Record<string, ModelPrice>;   // model -> $/MTok, for notional metering when the CLI reports no cost
+  config?: Record<string, unknown>;      // adapter config overrides applied to every run (codex: -c key=value)
 }
 
 export interface ModelPrice {
@@ -47,6 +48,7 @@ export interface RunChoice {
   model: string;
   probe_model?: string;
   prices?: Record<string, ModelPrice>;
+  config?: Record<string, unknown>;
 }
 
 export interface LoopConfig {
