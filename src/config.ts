@@ -109,6 +109,10 @@ export function loadRoster(): Roster {
   }
   const global = { ...GLOBAL_DEFAULTS, ...g } as unknown as GlobalConfig;
   const providers = parseProviders(raw);
+  // Global probe pin (H-625): '[global] probe = "codex:small"' routes every
+  // probe pass there while its cap stands. The ref must name its tier —
+  // there is no loop context here to default from.
+  global.probe = g['probe'] ? resolveRef(String(g['probe']), providers, {}, '[global] probe') : undefined;
 
   const loops: Record<string, LoopConfig> = {};
   const rawLoops = (raw['loops'] ?? {}) as Record<string, Record<string, unknown>>;

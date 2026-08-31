@@ -7,11 +7,12 @@
 # Creates an isolated REV_HOME and Helm DB in a temp dir, seeds one
 # synthetic ticket, runs ONE real agent iteration, and reports pass/fail.
 # Touches nothing outside the temp dir. Usage:
-#   scripts/real-smoke.sh /path/to/helm [model]
+#   scripts/real-smoke.sh /path/to/helm [model] [runtime]
 set -euo pipefail
 
-HELM="${1:?usage: real-smoke.sh /path/to/helm [model]}"
+HELM="${1:?usage: real-smoke.sh /path/to/helm [model] [runtime]}"
 MODEL="${2:-claude-sonnet-5}"
+RUNTIME="${3:-claude}"
 REV="$(cd "$(dirname "$0")/.." && pwd)"
 HOME_DIR="$(mktemp -d -t rev-real-smoke)"
 DB="$HOME_DIR/helm.db"
@@ -30,7 +31,7 @@ poll_seconds = 5
 [loops.smoke-worker]
 workstream = "rev-test"
 cwd = "$HOME_DIR/work"
-runtime = "claude"
+runtime = "$RUNTIME"
 model = "$MODEL"
 constitution = "constitutions/smoke-worker.md"
 EOF

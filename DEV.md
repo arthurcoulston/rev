@@ -183,7 +183,13 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   actor identity, token-log, and spend note all carry the model actually used.
   An unknown `held_count` (older helmo) never probes — real work misrouted to
   the small tier is the worse mistake — and store-wide loops never probe:
-  their motion-only wakes ARE the triage work.
+  their motion-only wakes ARE the triage work. A `[global] probe =
+  "provider:tier"` pin (H-625; live as `codex:small`, Arthur 2026-08-31)
+  routes every probe to that provider while its cap stands — the whole
+  RunChoice swaps, so runtime, prices, config, toolset wording, and the
+  transient path all follow the pinned provider. The pin yields to the
+  loop's own `probe_tier` when the pinned cap is out, and never touches a
+  mock loop (tests stay hermetic).
 - **A provider choice is decided fresh each iteration, never sticky** (H-479).
   `choiceDecide` takes the rotation cycle at the iteration's position, skips
   any provider whose cap the fresh snapshot says is out (then fallbacks), and

@@ -154,12 +154,13 @@ describe('limitDecide (H-402)', () => {
   });
 });
 
-describe('probeDecide (H-412)', () => {
+describe('probeDecide (H-412, pin H-625)', () => {
   const small = 'claude-haiku-4-5-20251001';
   const base = { probeModel: small, workstream: 'security', readyCount: 0, heldCount: 0 };
+  const pin = { provider: 'codex', runtime: 'codex' as const, model: 'x-small' };
 
   it('nothing ready and nothing in hand is the probe case', () => {
-    expect(probeDecide(base)).toBe(small);
+    expect(probeDecide(base)).toEqual({ model: small });
   });
   it('ready work runs at the working tier', () => {
     expect(probeDecide({ ...base, readyCount: 1 })).toBeNull();
@@ -175,6 +176,24 @@ describe('probeDecide (H-412)', () => {
   });
   it("store-wide loops never probe: their motion-only wakes ARE the triage work", () => {
     expect(probeDecide({ ...base, workstream: '*' })).toBeNull();
+  });
+  it('a standing pin takes the probe, provider and all', () => {
+    expect(probeDecide({ ...base, pinned: pin })).toEqual({ model: pin.model, on: pin });
+  });
+  it('the pin supplies the probe even for a loop with no probe model of its own', () => {
+    expect(probeDecide({ ...base, probeModel: undefined, pinned: pin })).toEqual({ model: pin.model, on: pin });
+  });
+  it("an exhausted pin yields to the loop's own probe model on the chosen provider", () => {
+    expect(probeDecide({ ...base, pinned: pin, pinnedExhausted: true })).toEqual({ model: small });
+  });
+  it('an exhausted pin with no fallback probe model means no probe', () => {
+    expect(probeDecide({ ...base, probeModel: undefined, pinned: pin, pinnedExhausted: true })).toBeNull();
+  });
+  it('mock loops never leave mock — tests stay hermetic under a pinned roster', () => {
+    expect(probeDecide({ ...base, pinned: pin, mock: true })).toEqual({ model: small });
+  });
+  it('the pin does not widen the probe case: ready work still runs at the working tier', () => {
+    expect(probeDecide({ ...base, pinned: pin, readyCount: 1 })).toBeNull();
   });
 });
 

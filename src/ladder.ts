@@ -131,14 +131,24 @@ export function breakerDecide(
 // answer is the working model — a probe misroute wastes cents, but real work
 // accidentally run on the small tier is a misroute of judgement. Store-wide
 // loops ('*') never probe: their motion-only wakes ARE the work (triage).
+//
+// A roster-wide pin ([global] probe, H-625) moves every probe to one
+// provider/tier — the steady probe trickle comes off the primary provider's
+// cap. The pin yields to the loop's own probe model when its cap is out, and
+// never touches a mock loop: tests must stay hermetic.
 export function probeDecide(c: {
   probeModel: string | undefined;
   workstream: string;
   readyCount: number;
   heldCount: number | undefined;
-}): string | null {
-  if (!c.probeModel || c.workstream === '*') return null;
-  return c.readyCount === 0 && c.heldCount === 0 ? c.probeModel : null;
+  pinned?: RunChoice;
+  pinnedExhausted?: boolean;
+  mock?: boolean;
+}): { model: string; on?: RunChoice } | null {
+  if (c.workstream === '*') return null;
+  if (c.readyCount !== 0 || c.heldCount !== 0) return null;
+  if (!c.mock && c.pinned && !c.pinnedExhausted) return { model: c.pinned.model, on: c.pinned };
+  return c.probeModel ? { model: c.probeModel } : null;
 }
 
 // Which provider runs this iteration (H-479; crew skills/model-selection.md).
