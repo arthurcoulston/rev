@@ -66,6 +66,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   let i = 0;
   let durWindow: number[] = [];
   let tAvg = 0;
+  let firstPoll = true; // restart pickup: see the wake gate below (H-426)
   const lineage = ancestryStamp();
 
   while (true) {
@@ -113,10 +114,14 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         await sleep(g.poll_seconds);
         continue;
       }
-      // Store-wide loops ('*', H-92) wake on motion only: their job is judging
-      // fresh activity, and standing ready backlog anywhere in the store would
-      // otherwise wake them every poll, forever.
-      const wake = l.workstream === '*' ? w.changed_since : w.ready_count > 0 || w.changed_since;
+      // All loops wake on motion only (H-426; store-wide since H-92): ready_count
+      // is a standing property, not motion, so a loop that declines a ticket and
+      // idles would be re-woken by that same ticket every poll, forever. The one
+      // exception is the first successful poll after process start — standing
+      // ready work counts once there, so a loop that went down with work queued
+      // picks it up on restart instead of waiting for something else to move.
+      const wake = w.changed_since || (firstPoll && l.workstream !== '*' && w.ready_count > 0);
+      firstPoll = false;
       // Idle floor (H-336/H-545): an unproductive pass costs the same whatever
       // it finds, and both burn incidents were wakes minutes apart from a live
       // desk session or the loop's own exhaust. Motion accumulates while held —
@@ -138,6 +143,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       continue;
     }
     i += 1;
+    firstPoll = false; // an iteration IS the restart pickup — see the wake gate
     const started = Date.now();
     // Which provider runs this iteration (H-479): the rotation cycle at this
     // position, skipping any provider whose cap the fresh snapshot says is

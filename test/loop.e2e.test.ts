@@ -109,23 +109,56 @@ fi
 '''
 `);
     seedTicket(e, 'A ticket the note loop will only comment on');
-    rev(e, ['run', 'note-loop', '--count', '3']);
-
     const dir = join(e.home, 'state', 'note-loop');
+    // Two iterations requested, but only one can happen: the first idles, and
+    // the standing ticket the mock keeps declining is not motion (H-426), so
+    // the loop polls quietly until the timeout kills it.
+    try {
+      execFileSync('npx', ['tsx', REV_CLI, 'run', 'note-loop', '--count', '2'], {
+        env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..'), timeout: 4000,
+      });
+      expect.unreachable('a declined ready ticket must not re-wake the idled loop');
+    } catch {
+      /* killed while idling: expected */
+    }
     const events = readFileSync(join(dir, 'events.log'), 'utf8');
     expect(events).toMatch(/run-end.*iter=1.*produced=false.*action=idle/);
     expect(existsSync(join(dir, 'IDLE'))).toBe(true);
 
-    // Every pass idles; none is scored as production, so none skips the gate.
+    // Every pass idles; none is scored as production, so none skips the gate —
+    // and after the first idle, silence: no wake, no second iteration.
     expect(events).not.toMatch(/action=continue/);
+    expect(events).not.toMatch(/run-start.*iter=2/);
+    expect(events.slice(events.indexOf('action=idle'))).not.toMatch(/wake\s/);
+  });
 
-    // What this does NOT fix, and the reason there are wakes here at all: the
-    // seeded ticket stays ready because the mock never claims it, and a scoped
-    // loop's wake gate fires on `ready_count > 0` alone. So a ready ticket the
-    // agent keeps declining still re-wakes it each poll. Latent rather than
-    // observed — ward's traces show idles landing on genuinely empty queues —
-    // and it belongs to the wake gate, not to what counts as production.
-    expect((events.match(/wake\s/g) ?? []).length).toBeGreaterThan(0);
+  it('a restarted loop picks up standing ready work once, then goes motion-only (H-426)', () => {
+    const e = setup(`[loops.note-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+set -e
+ID=$(node ${HELM_CLI} list --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -n "$ID" ]; then
+  node ${HELM_CLI} update --ticket $ID --note "checked the queue; nothing actionable yet"
+  echo "rev-mock-usage tokens=1000 cost_usd=0.90"
+fi
+'''
+`);
+    seedTicket(e, 'A ticket that outlives a restart');
+    const dir = join(e.home, 'state', 'note-loop');
+    // First process: runs once, declines, idles. IDLE survives its exit.
+    rev(e, ['run', 'note-loop', '--count', '1']);
+    expect(existsSync(join(dir, 'IDLE'))).toBe(true);
+
+    // Second process starts idle with the ticket still ready and no motion:
+    // the first poll wakes it (restart pickup), the second does not.
+    const marker = readFileSync(join(dir, 'events.log'), 'utf8').length;
+    rev(e, ['run', 'note-loop', '--count', '1']);
+    const events = readFileSync(join(dir, 'events.log'), 'utf8').slice(marker);
+    expect(events).toMatch(/wake\s/);
+    expect(events).toMatch(/run-end.*iter=1/);
   });
 
   it('an empty-handed iteration runs on the probe model; one with work in reach does not (H-412)', () => {
@@ -168,8 +201,9 @@ echo "rev-mock-usage tokens=100 cost_usd=0.01"
   it('a rotation alternates providers every other run, signed everywhere (H-479)', () => {
     // Two mock providers on the same tier: iteration 1 runs provider-a,
     // iteration 2 runs provider-b — visible in the session env, the run-start
-    // events, and the token-log. The seeded ticket keeps both iterations
-    // waking (the mock never claims it), which is all rotation needs.
+    // events, and the token-log. Iteration 1 closes the seeded ticket, so it
+    // scores as production and chains straight into iteration 2 — a declined
+    // standing ticket no longer re-wakes an idled loop (H-426).
     const e = setup(`[providers.prov-a]
 runtime = "mock"
 [providers.prov-a.models]
@@ -184,7 +218,16 @@ cwd = "/tmp"
 provider = "prov-a"
 tier = "mid"
 rotation = ["prov-a", "prov-b"]
-mock_cmd = "echo MODEL:$REV_MODEL; echo 'rev-mock-usage tokens=10 cost_usd=0.01'"
+mock_cmd = '''
+set -e
+echo "MODEL:$REV_MODEL"
+ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -n "$ID" ]; then
+  node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
+  node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
+fi
+echo "rev-mock-usage tokens=10 cost_usd=0.01"
+'''
 `);
     seedTicket(e, 'Work for the rotator');
     const out = rev(e, ['run', 'rotator', '--count', '2']);

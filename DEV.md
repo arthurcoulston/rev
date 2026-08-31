@@ -216,11 +216,16 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   are recycled across a reboot: a stale marker whose number had been reused by
   an unrelated process made the supervisor abort as "already running" through
   57 launchd retries, with the whole fleet down and unable to converge (H-154).
-- A store-wide loop (`workstream = '*'`) wakes on motion only, and its
-  wake-check must carry NO scope at all — assignee included. Helm ORs the
-  scope clauses, so any one of them narrows the whole store back down to
-  tickets already assigned and silences the fresh-filing signal these loops
-  exist for. Cost us bosun's entire wake path until H-138.
+- Every loop wakes on motion only (H-426; store-wide since H-92): ready_count
+  is a standing property, so a scoped loop that declined a ticket and idled
+  was re-woken by that same ticket every poll, forever. One exception: a
+  scoped loop's first successful poll after process start also counts standing
+  ready work, so a loop that went down with work queued picks it up on restart
+  instead of waiting for unrelated motion. A store-wide loop's (`workstream =
+  '*'`) wake-check must additionally carry NO scope at all — assignee
+  included. Helm ORs the scope clauses, so any one of them narrows the whole
+  store back down to tickets already assigned and silences the fresh-filing
+  signal these loops exist for. Cost us bosun's entire wake path until H-138.
 
 ## Neighbors
 
