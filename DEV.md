@@ -204,7 +204,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   one-ticket wake cost $5.70 — because that is a question of what counts as
   production, not of spend.
 - Escalations must land as Helmo tickets, never only in logs; a BLOCKED loop
-  that couldn't escalate prints loudly and relies on the dashboard.
+  that couldn't escalate prints loudly and relies on the dashboard. One live
+  summons per loop (H-401): a block checks for a standing non-terminal
+  escalation before filing (best-effort — a duplicate beats silence). And
+  `rev resume` resets the fail/limit streaks: a resume is a statement the
+  cause was looked at, so the loop gets its full retry budget back rather
+  than one retry that re-blocks in seconds and files a duplicate.
 - Liveness is identity, never a bare pid. A RUNNING marker records the command
   that owns it (`runningStamp()` — use it anywhere RUNNING is written), and
   `pidAlive` requires the live process to still be running that command. Pids

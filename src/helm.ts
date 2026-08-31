@@ -100,6 +100,25 @@ export function recordSpend(g: GlobalConfig, ticketId: string, tokens: number | 
   run(g, args, revActor());
 }
 
+// The standing escalation for a loop, if one exists. Re-escalating while the
+// first is unanswered files duplicate summonses — three loops × repeated
+// resumes produced six open tickets for two underlying events (H-401).
+export function openEscalation(g: GlobalConfig, l: LoopConfig): string | null {
+  const title = escalationTitle(l);
+  for (const status of ['awaiting_human', 'open', 'in_progress']) {
+    const res = run(g, ['list', '--workstream', g.escalation_workstream, '--status', status, '--limit', '100']) as {
+      tickets: { id: string; title: string }[];
+    };
+    const hit = res.tickets.find((t) => t.title === title);
+    if (hit) return hit.id;
+  }
+  return null;
+}
+
+function escalationTitle(l: LoopConfig): string {
+  return `Loop '${l.name}' is blocked: needs a decision`;
+}
+
 // A BLOCKED loop is a summons, not a log line: file it straight into the
 // awaiting-human queue so the operator's existing dashboard and meeting see it.
 export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, outputTail: string, stateDir: string): string {
@@ -107,7 +126,7 @@ export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, 
     g,
     [
       'create',
-      '--title', `Loop '${l.name}' is blocked: needs a decision`,
+      '--title', escalationTitle(l),
       '--body',
       `Rev halted loop '${l.name}' (${scopeLabel(l)}). Reason: ${reason}.\n\nState dir: ${stateDir} (events.log has the trace; console tail below).\nTo resume after fixing: remove the BLOCKED sentinel and run \`rev run ${l.name}\`.\n\nLast session output:\n${outputTail.slice(-1500)}`,
       '--workstream', g.escalation_workstream,

@@ -2,7 +2,7 @@
 // the outcome through the ladder, idle or halt. v0 runs one loop in the
 // foreground; the multi-loop supervisor is the next milestone.
 import { stateDir } from './config.js';
-import { WakeCheck, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, recordSpend, scopeLabel, wakeCheck, workstreamInfo } from './helm.js';
+import { WakeCheck, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, openEscalation, recordSpend, scopeLabel, wakeCheck, workstreamInfo } from './helm.js';
 import { burnWindow, markBurnFloor } from './burn.js';
 import { exhaustedLimit, pollUsage, readCodexUsage, readUsage } from './usage.js';
 import { raiseWedgeAlarm, wedgeDecide } from './health.js';
@@ -326,6 +326,16 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       case 'blocked': {
         sSet(l.name, 'BLOCKED', `${action.reason}\nat=${new Date().toISOString()}\n`);
         logEvent(l.name, 'blocked', `reason=${action.reason}`);
+        // Best-effort check only: a duplicate escalation beats a silent block.
+        let standing: string | null = null;
+        try {
+          standing = openEscalation(g, l);
+        } catch { /* fall through to escalate */ }
+        if (standing) {
+          console.log(`rev: '${l.name}' BLOCKED — escalation ${standing} already open; not filing another.`);
+          logEvent(l.name, 'escalation-standing', `ticket=${standing}`);
+          return;
+        }
         try {
           const id = escalateBlocked(g, l, action.reason, res.outputTail, dir);
           console.log(`rev: '${l.name}' BLOCKED — escalated as Helm ticket ${id}.`);

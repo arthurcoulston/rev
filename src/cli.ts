@@ -5,7 +5,7 @@ import { loadRoster, stateDir } from './config.js';
 import { pollUsage, readCodexUsage, readUsage, usageLine, usagePath } from './usage.js';
 import { runLoop } from './loop.js';
 import { serviceInstall, serviceStart, serviceStatusLine, serviceUninstall } from './service.js';
-import { logEvent, pidAlive, sClear, sGet, sHas, sSet } from './sentinels.js';
+import { logEvent, pidAlive, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
 import { runFleet } from './supervisor.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -106,7 +106,11 @@ switch (cmd) {
   case 'resume': {
     const name = loopArg();
     sClear(name, 'STOP', 'HOLD', 'BLOCKED');
-    logEvent(name, 'operator', 'STOP/HOLD/BLOCKED cleared');
+    // A resume is a statement the cause was looked at: the loop gets its full
+    // retry budget back. Carrying the streak over made resume a single retry
+    // that re-blocked in seconds and filed a duplicate escalation (H-401).
+    streakReset(name, 'fail', 'limit');
+    logEvent(name, 'operator', 'STOP/HOLD/BLOCKED cleared; fail/limit streaks reset');
     const sup = pidAlive('supervisor');
     console.log(
       `Halt sentinels cleared for '${name}'.` +

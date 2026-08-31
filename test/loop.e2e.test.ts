@@ -418,6 +418,28 @@ mock_cmd = "exit 1"
     expect(q.tickets.some((t) => t.title.includes("Loop 'bad-loop'"))).toBe(true);
   });
 
+  it('resume restores the retry budget; a re-block does not file a duplicate escalation (H-401)', () => {
+    const e = setup(`[loops.bad-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "exit 1"
+`);
+    seedTicket(e, 'Work the bad loop will fail at');
+    rev(e, ['run', 'bad-loop', '--count', '5']);
+    expect(existsSync(join(e.home, 'state', 'bad-loop', '.fail_streak'))).toBe(true);
+
+    rev(e, ['resume', 'bad-loop']);
+    // The resume is a statement the cause was looked at: full budget back.
+    expect(existsSync(join(e.home, 'state', 'bad-loop', '.fail_streak'))).toBe(false);
+
+    const out = rev(e, ['run', 'bad-loop', '--count', '5']);
+    expect(out).toContain('already open; not filing another');
+    const escalations = (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: { title: string }[] }).tickets
+      .filter((t) => t.title.includes("Loop 'bad-loop'"));
+    expect(escalations.length).toBe(1);
+  });
+
   it('STOP halts before any iteration; apparatus fault fails closed', () => {
     const e = setup(`[loops.app-loop]
 workstream = "rev-test"
