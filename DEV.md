@@ -115,7 +115,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   loudly. Instance data
   lives in `~/.rev/` (roster.toml, mcp/, state/<loop>/, token-log), NEVER
   in this repo — publishability is structural.
-- `view.ts` — read-only machine dashboard at :4500. `cli.ts` — run / status /
+- `view.ts` — read-only machine dashboard at :4500; `/health.json` is the
+  machine-readable snapshot (loop states, usage) for aggregators like the
+  estate health page (crew tools/health, H-627) — consumers read it rather
+  than re-deriving sentinel truth. `cli.ts` — run / status /
   stop / resume / pace / service / tail. `rev run`/`rev stop` with no argument
   mean the whole machine (Arthur's ruling: the operator starts the machine,
   not a named worker).
