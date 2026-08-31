@@ -50,7 +50,24 @@ function spend(name: string): { tokens: number; cost: number } {
   return { tokens, cost };
 }
 
-createServer((_req, res) => {
+createServer((req, res) => {
+  // Machine-readable snapshot for aggregators (the estate health page, H-627).
+  // Rev owns loop-state truth — sentinel precedence and pid identity (H-154)
+  // — so consumers read this instead of re-deriving it from the markers.
+  if (req.url === '/health.json') {
+    const { loops } = loadRoster();
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({
+      supervisor: pidAlive('supervisor') || null,
+      loops: Object.values(loops).map((l) => {
+        const st = state(l.name);
+        const reason = st === 'BLOCKED' || st === 'WEDGED' ? sGet(l.name, st)?.split('\n')[0] : undefined;
+        return { name: l.name, state: st, workstream: l.workstream, ...(reason ? { reason } : {}) };
+      }),
+      usage: { claude: readUsage(), codex: readCodexUsage() },
+    }));
+    return;
+  }
   const { loops } = loadRoster();
   const rows = Object.values(loops)
     .map((l) => {
