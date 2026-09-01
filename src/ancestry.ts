@@ -37,8 +37,14 @@ export function ancestryBroken(stamp: number[]): boolean {
   for (let k = 0; k < stamp.length; k++) {
     const cur = ppidOf(stamp[k]!);
     if (cur === null) return true; // ancestor gone
-    const expected = k + 1 < stamp.length ? stamp[k + 1]! : 1;
-    if (cur !== expected) return true; // reparented — its own parent died
+    // The last recorded link only has to be alive. A complete walk ends just
+    // below pid 1, whose parent (launchd) never dies, so asserting parent==1
+    // there was vacuous — and when the 10-link cap TRUNCATED the walk, that
+    // same assertion misread the real parent as a reparenting and drained the
+    // fleet within a second of start (H-635: deep process trees, e.g. a CI
+    // runner above npm above vitest, hit the cap deterministically).
+    if (k + 1 >= stamp.length) break;
+    if (cur !== stamp[k + 1]!) return true; // reparented — its own parent died
   }
   return false;
 }

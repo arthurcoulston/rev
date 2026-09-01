@@ -29,4 +29,13 @@ describe('ancestry', () => {
     if (stamp.length < 2) return; // chain too shallow in this runner to fake a mismatch
     expect(ancestryBroken([stamp[0]!, stamp[0]!])).toBe(true);
   });
+
+  it('a truncated stamp (walk cap hit) is not a broken chain — the last link only needs to be alive', () => {
+    // A one-link stamp stands in for a capped walk: our live parent's real
+    // parent is not pid 1, and before H-635 that read as a reparenting —
+    // deep process trees (CI runner > npm > vitest > tsx) drained the fleet
+    // within a second of start, deterministically.
+    expect(ppidOf(process.ppid)).not.toBe(1);
+    expect(ancestryBroken([process.ppid])).toBe(false);
+  });
 });
