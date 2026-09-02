@@ -2,11 +2,11 @@
 // the outcome through the ladder, idle or halt. v0 runs one loop in the
 // foreground; the multi-loop supervisor is the next milestone.
 import { stateDir } from './config.js';
-import { WakeCheck, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, openEscalation, recordSpend, scopeLabel, wakeCheck, workstreamInfo } from './helm.js';
+import { WakeCheck, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, openEscalation, recordSpend, scopeLabel, seatHolds, seatId, wakeCheck, workstreamInfo } from './helm.js';
 import { burnWindow, markBurnFloor } from './burn.js';
 import { exhaustedLimit, pollUsage, readCodexUsage, readUsage } from './usage.js';
 import { raiseWedgeAlarm, wedgeDecide } from './health.js';
-import { breakerDecide, choiceDecide, ladderDecide, limitDecide, probeDecide, rollingMean, velocityToPause } from './ladder.js';
+import { breakerDecide, choiceDecide, ladderDecide, limitDecide, probeDecide, rollingMean, seatDecide, velocityToPause } from './ladder.js';
 import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streak, streakReset } from './sentinels.js';
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
@@ -67,6 +67,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   let durWindow: number[] = [];
   let tAvg = 0;
   let firstPoll = true; // restart pickup: see the wake gate below (H-426)
+  let seatHeld = false; // same-seat guard episode flag: log once per hold, not per poll (H-558)
   const lineage = ancestryStamp();
 
   while (true) {
@@ -141,6 +142,35 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     if (!before) {
       await sleep(g.poll_seconds);
       continue;
+    }
+    // Same-seat guard (H-558): before spending a session, ask who already
+    // holds in_progress work in this name. The loop's own claims carry its
+    // seat stamp; anything else fresh is another live instance — a desk
+    // session or subagent sharing the crew name — and working over it is how
+    // H-542 and H-560 were both trampled. Stand down and keep polling; the
+    // guard is best-effort and a check failure never stops the loop.
+    try {
+      const holds = seatHolds(g, l).map((h) => ({
+        ticketId: h.ticket_id,
+        claimSession: h.claim_actor?.session ?? null,
+        ageSeconds: h.claimed_at && Number.isFinite(Date.parse(h.claimed_at)) ? Math.max(0, (Date.now() - Date.parse(h.claimed_at)) / 1000) : null,
+      }));
+      const seat = seatDecide({ holds, seat: seatId(l), staleSeconds: g.seat_stale_seconds });
+      if (seat.act === 'stand_down') {
+        if (!seatHeld) {
+          seatHeld = true;
+          logEvent(l.name, 'seat-held', seat.reason);
+          console.log(`rev: '${l.name}' standing down — ${seat.reason}. Polling until the seat clears.`);
+        }
+        await sleep(g.poll_seconds);
+        continue;
+      }
+      if (seatHeld) {
+        seatHeld = false;
+        logEvent(l.name, 'seat-clear');
+      }
+    } catch (e) {
+      logEvent(l.name, 'seat-check-failed', String(e).slice(0, 200));
     }
     i += 1;
     firstPoll = false; // an iteration IS the restart pickup — see the wake gate

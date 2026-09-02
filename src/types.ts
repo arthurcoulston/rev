@@ -18,6 +18,7 @@ export interface GlobalConfig {
   limit_block_horizon_seconds: number;  // a cap resetting further out than this blocks for a human rather than waiting (H-402)
   limit_exhausted_percent: number;      // a usage bar at or above this counts as the cap that stopped us
   wedge_cap: number;                    // consecutive wake-check failures before a loop is declared wedged; 0 disables (H-448)
+  seat_stale_seconds: number;           // a foreign in_progress hold older than this no longer stands the loop down (H-558); 0 disables the guard
   drain_grace_seconds: number;          // supervisor: seconds a drain waits before SIGKILLing stragglers; 0 waits forever (H-281)
   probe?: RunChoice;                    // global probe pin ("provider:tier"): every probe pass runs here while its cap stands (H-625)
 }

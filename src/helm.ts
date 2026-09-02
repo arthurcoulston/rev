@@ -29,10 +29,28 @@ function run(g: GlobalConfig, args: string[], actor?: object): unknown {
   return JSON.parse(out);
 }
 
+// The seat stamp (H-558): every write a loop session makes carries this in the
+// actor's session field, so a claim's provenance says WHICH live instance of a
+// crew name holds it — the loop's own iterations, or a desk/subagent sharing
+// the name. seatDecide compares against it.
+export function seatId(l: LoopConfig): string {
+  return `rev:${l.name}`;
+}
+
 // The actor's model field is the model actually running the session — a probe
 // iteration on the small tier must not sign the record as the working model.
 export function loopActor(l: LoopConfig, model?: string): object {
-  return { name: l.name, kind: 'agent', model: model ?? l.model, version: l.version };
+  return { name: l.name, kind: 'agent', model: model ?? l.model, version: l.version, session: seatId(l) };
+}
+
+export interface SeatHold {
+  ticket_id: string;
+  claim_actor: { session?: string } | null;
+  claimed_at: string | null;
+}
+
+export function seatHolds(g: GlobalConfig, l: LoopConfig): SeatHold[] {
+  return (run(g, ['seat-check', '--assignee', l.name]) as { holds: SeatHold[] }).holds;
 }
 
 export function revActor(): object {

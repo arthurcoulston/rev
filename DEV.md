@@ -225,6 +225,18 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   are recycled across a reboot: a stale marker whose number had been reused by
   an unrelated process made the supervisor abort as "already running" through
   57 launchd retries, with the whole fleet down and unable to converge (H-154).
+- **One seat, one worker** (H-558). Before spending an iteration the loop asks
+  Helmo who holds in_progress work in its name (`seat-check`) and stands down —
+  polls, spawns nothing — while a FRESH hold its own iterations did not claim
+  exists: a desk session or subagent sharing the crew name is live in the
+  seat, and working over it is how H-542 and H-560 were both trampled. Loop
+  sessions stamp `session: "rev:<loop>"` into their Helmo actor (`loopActor`),
+  which is how the seat's own mid-flight work is recognized across
+  iterations. Stale holds (past `seat_stale_seconds`, default 24h — Helmo's
+  own takeover convention) and unattributable claims never block: the guard
+  yields to live work, it does not wedge a seat on an abandoned one.
+  Best-effort — a seat-check failure logs and proceeds. The race window
+  (a desk claim landing mid-iteration) is accepted per Arthur's H-558 answer.
 - Every loop wakes on motion only (H-426; store-wide since H-92): ready_count
   is a standing property, so a scoped loop that declined a ticket and idled
   was re-woken by that same ticket every poll, forever. One exception: a

@@ -37,6 +37,13 @@ const GLOBAL_DEFAULTS = {
   // Five consecutive failures is five minutes at the default poll — long past
   // contention, and short enough that nobody loses an afternoon (H-448).
   wedge_cap: 5,
+  // Same-seat guard (H-558): a fresh in_progress hold in the loop's name that
+  // its own iterations did not claim means another live instance is working
+  // the seat — stand down rather than work over it. 24h matches Helmo's own
+  // stale-claim convention: past it the hold is takeover territory, not a
+  // live session, and blocking on it would let one abandoned claim idle a
+  // loop forever.
+  seat_stale_seconds: 86400,
   // Drain escalation (H-281): a drain that waits forever on a wedged child
   // ends with an operator kill -9 and an orphan. Past the grace, SIGKILL.
   // Generous because in-flight iterations legitimately run minutes.

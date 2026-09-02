@@ -91,6 +91,40 @@ fi
     expect(events).toMatch(/action=idle/);
   });
 
+  it('stands down while a desk session holds work in its name, resumes when the seat clears (H-558)', async () => {
+    const e = setup(`[loops.seat-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+`);
+    // A desk session sharing the crew name claims a ticket reserved for it —
+    // the exact H-542/H-560 shape. Same actor name, no rev seat stamp.
+    const id = (helm(e, ['create', '--title', 'Seat collision', '--body', 'held by a desk session sharing the name', '--workstream', 'rev-test', '--type', 'ops', '--assignee', 'seat-loop']) as { id: string }).id;
+    const desk = '{"name":"seat-loop","kind":"agent","model":"claude-fable-5","version":"claude-code-2.1.221","session":"desk"}';
+    helm(e, ['update', '--ticket', id, '--note', 'claimed at the desk', '--status', 'in_progress'], desk);
+
+    const dir = join(e.home, 'state', 'seat-loop');
+    const events = () => (existsSync(join(dir, 'events.log')) ? readFileSync(join(dir, 'events.log'), 'utf8') : '');
+    const until = async (re: RegExp) => {
+      const deadline = Date.now() + 30_000;
+      while (!re.test(events()) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 250));
+    };
+    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'seat-loop'], { env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore' });
+    try {
+      await until(/seat-held/);
+      expect(events()).toMatch(/seat-held.*another live session \('desk'\)/);
+      expect(events()).not.toMatch(/run-start/); // no session spent over the foreign hold
+      // The desk session finishes its work; the seat clears and the loop runs.
+      helm(e, ['update', '--ticket', id, '--note', 'done at the desk', '--status', 'done', '--evidence-kind', 'other', '--evidence-ref', 'x'], desk);
+      await until(/run-start/);
+      expect(events()).toMatch(/seat-clear/);
+      expect(events()).toMatch(/run-start/);
+    } finally {
+      child.kill('SIGKILL');
+    }
+  });
+
   it('a note-only session is not production — the loop idles instead of running on (H-412)', () => {
     // The exact shape that cost the most: an agent finds nothing actionable,
     // records that honestly, and ends. Before the advancing check that note

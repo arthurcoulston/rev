@@ -45,6 +45,36 @@ export function ladderDecide(
   }
 }
 
+// Same-seat guard (H-558): two live sessions sharing one crew name (a rev loop
+// and a desk session or subagent) collided twice, each working over the
+// other's in-flight tickets. Before spending an iteration, the loop asks who
+// holds in_progress work in its name. Its own claims carry its seat stamp;
+// anything else FRESH is another live instance and the loop stands down. A
+// stale hold (past Helmo's takeover convention) is an abandoned claim, not a
+// live session — blocking on it would let one forgotten ticket idle a loop
+// forever, so the session gets to apply the normal takeover discipline
+// instead. A hold whose claim cannot be found or dated is skipped for the
+// same reason: the guard exists to yield to live work, never to wedge a seat
+// on an unattributable record.
+export type SeatAction = { act: 'work' } | { act: 'stand_down'; reason: string };
+
+export function seatDecide(opts: {
+  holds: { ticketId: string; claimSession: string | null; ageSeconds: number | null }[];
+  seat: string;
+  staleSeconds: number;
+}): SeatAction {
+  if (opts.staleSeconds <= 0) return { act: 'work' };
+  for (const h of opts.holds) {
+    if (h.claimSession === opts.seat) continue; // the seat's own mid-flight work
+    if (h.ageSeconds === null || h.ageSeconds > opts.staleSeconds) continue; // abandoned or unattributable
+    return {
+      act: 'stand_down',
+      reason: `${h.ticketId} held in this name by another live session${h.claimSession ? ` ('${h.claimSession}')` : ''} — claimed ${Math.round(h.ageSeconds / 60)}m ago`,
+    };
+  }
+  return { act: 'work' };
+}
+
 // Supervisor respawn policy for a loop-process exit. A halt sentinel means the
 // exit was deliberate (or escalated): never respawn over an operator's or the
 // ladder's decision — poll until it is cleared. A clean exit after a healthy
