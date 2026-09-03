@@ -71,7 +71,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent
   CLAUDE/ANTHROPIC/CODEX env — the auth-leak fix; don't weaken it), per-session
   token metering, transient-API detection, and the strict MCP surface (sessions
-  see ONLY Helmo + the loop's `mcp_extra`): claude via `--strict-mcp-config`,
+  see ONLY Helmo + the loop's `mcp_extra`; only the Helmo server is handed the
+  loop's actor identity in `env` — an `mcp_extra` server that wants to know who
+  is writing gets it as a per-call parameter from the agent, or from its own
+  `env` block in the loop's JSON, never from `HELMO_ACTOR`, which `cleanEnv()`
+  does not carry into the session, H-324): claude via `--strict-mcp-config`,
   codex via the whole-table `-c mcp_servers={...}` override (H-479). Codex
   gotchas the adapter encodes, all verified on codex-cli 0.150.1: the prompt
   goes in on stdin (`exec -`) because argv is ps-readable and size-capped;
