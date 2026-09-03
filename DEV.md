@@ -166,12 +166,15 @@ ahead of that block, which is what brings the dark values in under
 Adopted: surfaces (`--page`), the grey ladder, `--hairline`. No radius ramp —
 nothing on this page is rounded.
 
-Not adopted, deliberately: the status colours and the interactive `--link`
-blue. shadcn's neutral base ships no status ramp, and its own `--accent` is a
-hover *surface*, not an interactive colour. Rev carries the values Helmo and
-the roadmap already carry, so it is not a third palette — **H-771** is where
-Arthur decides whether these move into the estate's own token set, and if he
-says yes the swap here is mechanical.
+Status colours and the interactive `--link` blue were held back at first —
+shadcn's neutral base ships no status ramp, and its own `--accent` is a hover
+*surface*, not an interactive colour. Arthur's call on **H-771** was to put
+both in the estate's token set, so they alias like everything else now and
+rev's dark overrides for them are gone: the estate's ramp is themed.
+`--warn-text` moved one step in that swap. Rev carried `#b60`, 4.19:1 on white,
+and rev is the view that uses amber AS body text; the estate's light amber is
+`#a60` at 4.56:1 — the value this file's own note reported upstream when the
+health page measured it. That divergence is closed.
 
 Two things rev needed that the other two did not:
 
