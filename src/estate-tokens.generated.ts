@@ -6,7 +6,7 @@
 // shares (R-11); rev consumes it as a copy so it stays publishable alone.
 
 export const ESTATE_TOKENS = `
-/* GENERATED — do not edit. Source: src/index.css (shadcn radix-nova, neutral) + MARK_HUE in tools/generate.mjs
+/* GENERATED — do not edit. Source: src/index.css (shadcn radix-nova, neutral) + MARK_HUE and STATUS in tools/generate.mjs
    Regenerate: npm run generate
    Drift is a build failure: npm run check */
 
@@ -158,6 +158,65 @@ export const ESTATE_TOKENS = `
     --crew-proof: oklch(67.3% 0.182 276.935); /* indigo */
     --crew-rolo: oklch(60.9% 0.126 221.723); /* cyan */
     --crew-ward: oklch(54.6% 0.245 262.881); /* blue */
+  }
+}
+
+/* Status ramp and interactive colour (H-771). Base hues are the dataviz
+   reference palette; the -ink and -wash steps are the estate's own, derived
+   for text use and measured in tools/status.test.mjs. Named --interactive and
+   --status-* rather than --link and the views' own names, so that an alias
+   seam can never come out as --link: var(--link), which CSS drops silently.
+   Colour never identifies alone — always beside a text label (H-713). */
+:root, .light {
+  --status-good: #006300;
+  --status-good-ink: #006300;
+  --status-good-wash: rgba(12,163,12,0.12);
+  --status-warn: #a60;
+  --status-warn-ink: #8a5c00;
+  --status-warn-wash: rgba(250,178,25,0.16);
+  --status-serious: #ac491f;
+  --status-serious-ink: #ac491f;
+  --status-serious-wash: rgba(236,131,90,0.14);
+  --status-bad: #d03b3b;
+  --status-bad-ink: #a51f1f;
+  --status-bad-wash: rgba(208,59,59,0.12);
+  --interactive: #256abf;
+  --interactive-foreground: #ffffff;
+}
+
+.dark {
+  --status-good: #0ca30c;
+  --status-good-ink: #0ca30c;
+  --status-good-wash: rgba(12,163,12,0.14);
+  --status-warn: #fab219;
+  --status-warn-ink: #fab219;
+  --status-warn-wash: rgba(250,178,25,0.14);
+  --status-serious: #ec835a;
+  --status-serious-ink: #ec835a;
+  --status-serious-wash: rgba(236,131,90,0.14);
+  --status-bad: #ef6f6c;
+  --status-bad-ink: #ef6f6c;
+  --status-bad-wash: rgba(208,59,59,0.16);
+  --interactive: #3987e5;
+  --interactive-foreground: oklch(0.145 0 0);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --status-good: #0ca30c;
+    --status-good-ink: #0ca30c;
+    --status-good-wash: rgba(12,163,12,0.14);
+    --status-warn: #fab219;
+    --status-warn-ink: #fab219;
+    --status-warn-wash: rgba(250,178,25,0.14);
+    --status-serious: #ec835a;
+    --status-serious-ink: #ec835a;
+    --status-serious-wash: rgba(236,131,90,0.14);
+    --status-bad: #ef6f6c;
+    --status-bad-ink: #ef6f6c;
+    --status-bad-wash: rgba(208,59,59,0.16);
+    --interactive: #3987e5;
+    --interactive-foreground: oklch(0.145 0 0);
   }
 }
 `;

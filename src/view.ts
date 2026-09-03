@@ -117,26 +117,17 @@ ${ESTATE_TOKENS}
       --hairline: var(--border);
       /* No radius ramp: nothing on this page is rounded. */
 
-      /* Not adopted, deliberately. shadcn's neutral base ships no status ramp,
-         and its own --accent is a hover SURFACE, not an interactive colour —
-         mapping onto either would be translation, not adoption. These are the
-         values Helmo and the roadmap already carry, so rev is not a third
-         palette: whichever way H-771 lands, the swap here is mechanical.
-         Colour always rides with a text label, never alone (H-713). */
-      --good-text: #006300; --critical: #d03b3b; --link: #2a78d6;
-      /* Rev's own, and the one value the other two views have no place for:
-         they use amber as a wash behind a badge, rev uses it as small text, and
-         #fab219 as text on white is unreadable. #b60 is rev's existing amber,
-         kept; its dark sibling below IS the shared #fab219. */
-      --warn-text: #b60;
+      /* Status and link were the one part of this page shadcn had nothing for,
+         so they were held back as literals until the estate grew a ramp of its
+         own (H-771). Now they alias like everything else, and rev's dark
+         overrides for them are gone because the ramp is themed.
+         --warn-text moves one step: rev carried #b60, which is 4.19:1 on white
+         and rev uses amber AS body text. The estate's light amber is #a60 at
+         4.56:1 — the value the health page measured and this file's own note
+         reported upstream. Colour always rides with a text label (H-713). */
+      --good-text: var(--status-good); --critical: var(--status-bad);
+      --warn-text: var(--status-warn); --link: var(--interactive);
     }
-    @media (prefers-color-scheme: dark) { :root:not(.light) {
-      /* The status colours are the light half of a light-only page. On the
-         estate's dark surface #b00-family red and #b60 amber drop under 4.5:1,
-         so each gets the lightened step of the same hue. --good-text and --link
-         take the dark values Helmo and the roadmap already use. */
-      --good-text: #0ca30c; --critical: #ef6f6c; --warn-text: #fab219; --link: #3987e5;
-    } }
     body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; max-width: 1250px;
       background: var(--page); color: var(--ink); }
     a { color: var(--link); }
