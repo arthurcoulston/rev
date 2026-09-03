@@ -2,6 +2,7 @@
 // Deliberately plain read-only dashboard: the machine at a glance.
 // Helm shows the work; this shows the loops that do it.
 import { createServer } from 'node:http';
+import { AVATAR_MARKS, ESTATE_AVATARS } from './estate-avatars.generated.js';
 import { ESTATE_TOKENS } from './estate-tokens.generated.js';
 import { readCodexUsage, readUsage, usageLine, worstSeverity } from './usage.js';
 import { existsSync, readFileSync } from 'node:fs';
@@ -13,6 +14,38 @@ const port = Number(process.env['REV_VIEW_PORT'] ?? 4500);
 const host = process.env['REV_VIEW_HOST'] ?? '127.0.0.1';
 const esc = (s: unknown) =>
   String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+
+// ---------- actors ----------
+
+const MARKS = new Set<string>(AVATAR_MARKS);
+
+/** Every row on this page is an agent, and that comes from the roster's own
+ *  contract rather than from the look of a name: loadRoster refuses a loop
+ *  with no `constitution` — the profile the process runs under — and the sole
+ *  exception is an all-mock loop, which is a test fixture and not a member.
+ *  Rev supervises agent loops; there is no field a human or an orchestrator
+ *  could arrive in. If that ever changes, this constant is the one place a
+ *  read has to replace it, and test/estate-avatars.test.ts pins both halves:
+ *  the refusal it rests on, and the sprite composing this kind at all. */
+const LOOP_KIND = 'agent';
+
+/** A seat, drawn: the crew mark for its name in the agent frame, then the name.
+ *
+ *  THE NAME IS NOT OPTIONAL, and that is the point of having one function.
+ *  A crew hue is a retrieval accelerator, never an identifier — the estate
+ *  measured its own set and found ten members cannot have ten mutually
+ *  distinguishable hues (H-713) — so a mark must never stand alone. Every mark
+ *  on this page comes from here, which makes "the name is always beside it" a
+ *  property of the code rather than a habit.
+ *
+ *  A loop the sprite has no mark for renders bare. A new seat is not a defect,
+ *  and nothing here invents a mark from a name. */
+function actor(name: string): string {
+  const glyph = MARKS.has(name)
+    ? `<svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><use href="#crew-${esc(name)}-${LOOP_KIND}"/></svg>`
+    : '';
+  return `<span class="actor">${glyph}${esc(name)}</span>`;
+}
 
 function state(name: string): string {
   const pid = pidAlive(name);
@@ -82,7 +115,7 @@ createServer((req, res) => {
         .map((e) => `<div class="ev">${esc(e)}</div>`)
         .join('');
       return `<tr>
-        <td class="name">${esc(l.name)}</td>
+        <td class="name">${actor(l.name)}</td>
         <td class="st st-${st}">${st}${blocked}${wedged}</td>
         <td>${esc(l.workstream)}</td>
         <td>${esc(l.runtime)}/${esc(l.model)}</td>
@@ -139,6 +172,15 @@ ${ESTATE_TOKENS}
     th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--hairline); vertical-align: top; }
     th { font-size: 12px; text-transform: uppercase; color: var(--ink-3); }
     .name { font-family: ui-monospace, monospace; }
+    /* ---- actors (R-11 H-713): the mark says who, the frame says what kind ---- */
+    /* nowrap is load-bearing, not tidiness: the rule the avatar set ships under
+       is that a crew hue never identifies a member on its own, and a mark that
+       wrapped away from its name would be doing exactly that. The Loop column
+       is the narrowest on the page and the first to wrap on a phone. */
+    .actor { white-space: nowrap; }
+    /* No colour here — the mark carries its member hue from the sprite and the
+       frame is currentColor, so a seat is whatever ink its row gives it. */
+    .mark { width: 1.15em; height: 1.15em; vertical-align: -0.22em; margin-right: 4px; }
     .st { font-weight: 600; }
     .st-RUNNING { color: var(--good-text); } .st-IDLE { color: var(--ink-3); } .st-BLOCKED, .st-CRASHED, .st-WEDGED { color: var(--critical); }
     .st-LIMIT, .st-PARKED, .st-BACKOFF { color: var(--warn-text); } .st-STOP, .st-HOLD, .st-halted { color: var(--ink-4); }
@@ -151,6 +193,7 @@ ${ESTATE_TOKENS}
     .dim { color: var(--ink-4); }
     h1 span { color: var(--ink-4); font-weight: normal; font-size: 15px; }
   </style>
+  ${ESTATE_AVATARS}
   <h1>Rev <span>the machine, read-only · supervisor ${pidAlive('supervisor') ? `running (pid ${pidAlive('supervisor')})` : 'down'} · home ${esc(revHome())} · work lives in <a href="http://localhost:4400">Helm</a></span></h1>
   <p class="usage ${worstSeverity(readUsage())}">${esc(usageLine(readUsage(), 'Claude'))}</p>
   <p class="usage ${worstSeverity(readCodexUsage())}">${esc(usageLine(readCodexUsage(), 'Codex'))}</p>

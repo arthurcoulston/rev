@@ -134,8 +134,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 ## Commands
 
 - `npm run build`, `npm test` (ladder units + e2e with mock runtime).
-- `npm run vendor:tokens` refreshes the vendored estate design tokens; add
-  `-- --check` to fail on drift instead. See below.
+- `npm run vendor:tokens` refreshes the vendored estate design tokens, and
+  `npm run vendor:avatars` the vendored crew avatar sprite; add `-- --check`
+  to either to fail on drift instead. See below.
 - Start the machine: `node dist/cli.js run` (supervisor over the whole roster).
   Drive one loop: `node dist/cli.js run <loop> [--count N]` (foreground;
   `--count 1` is the assess-early lever).
@@ -201,6 +202,47 @@ a phone rendered the page at 980px, zoomed out to illegibility. Seven columns
 of machine detail still do not fit a phone and should not try to, so
 `.tablewrap` scrolls the table horizontally and leaves the heading and usage
 lines where they are.
+
+## The crew avatar sprite (R-11 H-714)
+
+`src/estate-avatars.generated.ts` is a second **vendored copy** on the same
+seam and for the same reason — the estate's `avatars/crew-avatars.svg`, refreshed
+by `scripts/vendor-estate-avatars.mjs`, drift-checked by
+`test/estate-avatars.test.ts`. The sprite is inlined into the page body and a
+mark is drawn with `<use href="#crew-<mark>-<kind>">`. No colour travels with
+it: a mark is `currentColor` over `var(--crew-<name>)`, which the vendored token
+copy already defines, so the two files interlock and neither holds a value the
+other owns.
+
+Rev has one actor surface — the Loop column — and rev is the third adopter, so
+the pattern transferred whole. **What is different here is the kind.** Helmo and
+the roadmap read it from the record: they store mixed kinds and answer with the
+one each name last wrote under. Rev's record holds no kind and has no field one
+could arrive in, so `LOOP_KIND` in `src/view.ts` states it once — and it rests
+on the roster's own contract rather than on the look of a name. `loadRoster`
+refuses a loop with no `constitution`, the profile the process runs under; the
+one exception is an all-mock loop, which is a test fixture. Every seat on this
+page is an agent because the roster will not load anything else.
+`test/estate-avatars.test.ts` pins both halves — the refusal, and the sprite
+composing that kind at all — so relaxing either turns `LOOP_KIND` red instead
+of turning every mark on the page invisible.
+
+**Everything in this area fails silently**, which is what the ten checks are
+for. A `<use>` at a symbol the sprite does not carry draws nothing: no console
+error, no failed request, a 200 on the page and a column that looks like a
+design choice. So the checks aim at that one shape — the id the view builds,
+the symbols the copy actually carries, and the sprite reaching the served HTML
+after `</style>` rather than inside it. Two traps inherited from the first
+adopter are in the estate's DEV.md: recognise a composed symbol by its *body*
+(`crew-frame-agent` matches the id shape exactly and is not a mark), and refuse
+a ragged sprite, because the view names `crew-${mark}-${kind}` from a roster it
+did not choose — roster keys are instance data in `~/.rev`, never in this repo.
+
+The all-pairs rule is structural, not a habit: ten members cannot have ten
+mutually distinguishable hues (H-713), so a mark must never stand without its
+name. Exactly one function draws one and it takes the name it prints, and
+`.actor { white-space: nowrap }` is part of the same rule — the Loop column is
+the narrowest on the page and the first to wrap on a phone.
 
 ## Invariants that bite
 
