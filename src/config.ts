@@ -10,6 +10,13 @@ export function revHome(): string {
   return process.env['REV_HOME'] ?? join(homedir(), '.rev');
 }
 
+// How long a drain may take before stragglers are SIGKILLed. Exported because
+// the service units have to outwait it (H-467): a launchd ExitTimeOut or a
+// systemd TimeoutStopSec shorter than this kills the supervisor mid-drain, and
+// the service manager's own group kill then lands on whatever is still in
+// flight. One number, two consumers, no drift.
+export const DEFAULT_DRAIN_GRACE_SECONDS = 600;
+
 const GLOBAL_DEFAULTS = {
   poll_seconds: 60,
   iteration_ceiling: 2000,
@@ -47,7 +54,7 @@ const GLOBAL_DEFAULTS = {
   // Drain escalation (H-281): a drain that waits forever on a wedged child
   // ends with an operator kill -9 and an orphan. Past the grace, SIGKILL.
   // Generous because in-flight iterations legitimately run minutes.
-  drain_grace_seconds: 600,
+  drain_grace_seconds: DEFAULT_DRAIN_GRACE_SECONDS,
 };
 
 export interface Roster {

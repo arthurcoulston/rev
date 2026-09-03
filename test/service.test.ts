@@ -13,6 +13,9 @@ describe('service unit generation', () => {
     expect(p).toContain('<string>run</string>');
     expect(p).toContain('<key>REV_HOME</key><string>/Users/x/.rev</string>');
     expect(p).toContain('launchd.log');
+    // H-467: outwait rev's own drain. The default 20s ExitTimeOut SIGKILLs the
+    // supervisor mid-drain, and launchd then sweeps its process group.
+    expect(p).toContain('<key>ExitTimeOut</key><integer>660</integer>');
   });
   it('launchd: XML-escapes paths', () => {
     const p = launchdPlist('/node', '/a&b/cli.js', { home: '/h', path: '/p', logPath: '/l' });
@@ -24,5 +27,9 @@ describe('service unit generation', () => {
     expect(u).toContain('Restart=on-failure');
     expect(u).toContain('Environment=REV_HOME=/home/x/.rev');
     expect(u).toContain('WantedBy=default.target');
+    // H-467: stop the supervisor, not every process in the cgroup, and give
+    // its drain longer than systemd's 90s default to finish.
+    expect(u).toContain('KillMode=mixed');
+    expect(u).toContain('TimeoutStopSec=660');
   });
 });

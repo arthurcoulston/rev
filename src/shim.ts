@@ -107,6 +107,19 @@ function logTokens(l: LoopConfig, model: string, tokens?: number, cost?: number,
   }
 }
 
+// Every session runs in its OWN process group (H-467). Without this the agent
+// CLI shares the group of the loop and the supervisor above it, and a
+// group-directed signal — launchd stopping the job, systemd killing the
+// cgroup, a Ctrl-C or hangup on a shell-started fleet — lands on the agent
+// mid-turn. The loop's careful signal deferral protects nothing then: the
+// session dies rc=143 after its file writes and before its Helmo close, and
+// the next iteration finds artifacts nobody's ticket accounts for. Detached,
+// the signal reaches only the loop process, which defers past the in-flight
+// session exactly as the drain is documented to. The cost is deliberate: a
+// SIGKILLed loop leaves its session running to completion as an orphan —
+// one session's tokens, spent finishing and closing its own work.
+const SESSION_GROUP = { detached: true } as const;
+
 // The system prompt a session carries: the constitution, then each roster
 // skill whole (H-247) — a loop that touches Drive carries file-stewardship
 // the way a desk session loads it. One file because the CLI takes one path.
@@ -135,7 +148,7 @@ function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string
         '--dangerously-skip-permissions',
         '--output-format', 'json',
       ],
-      { cwd: l.cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, env: cleanEnv(), stdio: ['ignore', 'pipe', 'pipe'] },
+      { cwd: l.cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, env: cleanEnv(), stdio: ['ignore', 'pipe', 'pipe'], ...SESSION_GROUP },
     );
     if (res.error) return { rc: 78, cls: 'apparatus', outputTail: `claude CLI not runnable: ${res.error.message}` };
     const stdout = res.stdout ?? '';
@@ -272,6 +285,7 @@ function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string,
       maxBuffer: 32 * 1024 * 1024,
       env: cleanEnv(),
       input: `${systemPrompt(l)}\n\n--- Iteration prompt ---\n\n${prompt}`,
+      ...SESSION_GROUP,
     },
   );
   if (res.error) return { rc: 78, cls: 'apparatus', outputTail: `codex CLI not runnable: ${res.error.message}` };
@@ -306,6 +320,7 @@ function runMock(l: LoopConfig, prompt: string, model: string): SessionResult {
     cwd: l.cwd,
     encoding: 'utf8',
     env: { ...cleanEnv(), REV_LOOP: l.name, REV_PROMPT: prompt, REV_MODEL: model, HELMO_ACTOR: JSON.stringify(loopActor(l, model)) },
+    ...SESSION_GROUP,
   });
   const rc = res.status ?? 1;
   const cls = rc === 0 ? 'ok' : rc === 75 ? 'transient' : rc === 78 ? 'apparatus' : 'failure';

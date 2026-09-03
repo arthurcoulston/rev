@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { revHome, stateDir } from './config.js';
+import { DEFAULT_DRAIN_GRACE_SECONDS, revHome, stateDir } from './config.js';
 import { pidAlive } from './sentinels.js';
 
 export const LABEL = 'dev.rev';
@@ -37,6 +37,12 @@ export function launchdPlist(node: string, cli: string, opts: { home: string; pa
   </dict>
   <key>StandardOutPath</key><string>${xml(opts.logPath)}</string>
   <key>StandardErrorPath</key><string>${xml(opts.logPath)}</string>
+  <!-- Outwait rev's own drain (H-467). launchd's default ExitTimeOut is 20
+       seconds; iterations legitimately run ten minutes. At the timeout launchd
+       SIGKILLs the job and then sweeps the rest of its process group, which is
+       how a routine \`launchctl kickstart -k\` used to sever a live agent
+       session between its file writes and its Helmo close. -->
+  <key>ExitTimeOut</key><integer>${DEFAULT_DRAIN_GRACE_SECONDS + 60}</integer>
 </dict>
 </plist>
 `;
@@ -50,6 +56,12 @@ Description=Rev — keeps agent loops turning
 ExecStart=${node} ${cli} run
 Restart=on-failure
 RestartSec=10
+# Stop the supervisor, not the whole cgroup (H-467). Under the default
+# KillMode=control-group systemd SIGTERMs every process in the unit, including
+# the agent session mid-turn; the supervisor's own drain is what should end a
+# loop, and it needs longer than the 90s default to do it.
+KillMode=mixed
+TimeoutStopSec=${DEFAULT_DRAIN_GRACE_SECONDS + 60}
 Environment=PATH=${opts.path}
 Environment=REV_HOME=${opts.home}
 

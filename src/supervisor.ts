@@ -2,7 +2,11 @@
 // the ladder's respawn policy, graceful drain on SIGTERM/SIGINT. The shim runs
 // sessions with spawnSync, so a loop process defers signals past its in-flight
 // iteration — the SIGTERM cascade here IS the drain: agents finish their
-// close-out, then exit. The supervisor owns processes, never judgment: a halt
+// close-out, then exit. That deferral is a courtesy the cascade extends, never
+// a guarantee the session can rely on: what actually keeps an agent's turn
+// intact is its own process group (shim.ts, H-467), because the signals that
+// broke it came from outside this file — launchd and systemd stopping the
+// job, a hangup on a shell-started fleet. The supervisor owns processes, never judgment: a halt
 // sentinel (STOP/HOLD/BLOCKED) is a decision made below or beside it, honored
 // until an operator clears it — the poll picks the loop back up within
 // poll_seconds of `rev resume`.

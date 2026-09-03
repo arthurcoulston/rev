@@ -73,7 +73,8 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   of tripping again on money already accounted for (H-412).
 - `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent
-  CLAUDE/ANTHROPIC/CODEX env — the auth-leak fix; don't weaken it), per-session
+  CLAUDE/ANTHROPIC/CODEX env — the auth-leak fix; don't weaken it), the session
+  **process group**, per-session
   token metering, transient-API detection, and the strict MCP surface (sessions
   see ONLY Helmo + the loop's `mcp_extra`; only the Helmo server is handed the
   loop's actor identity in `env` — an `mcp_extra` server that wants to know who
@@ -95,19 +96,44 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   plan auth reports no dollar cost, so cost is notional from the roster's
   `[providers.codex.prices]` — absent prices, the burn breaker is blind to
   that provider and the token-log shows `cost_usd=?`.
+  **Every session is its own process group** (`SESSION_GROUP`, H-467). Without
+  it the agent CLI shares the group of the loop and the supervisor above it, so
+  anything that signals that group — launchd stopping the job, systemd killing
+  the cgroup, a Ctrl-C or hangup on a shell-started fleet — lands on the agent
+  mid-turn. It died `rc=143` after its file writes and before its Helmo close,
+  and the next iteration met artifacts no ticket accounted for; twice against
+  ward, once against bosun, once against mason. Detached, the signal reaches
+  only the loop process. The cost is deliberate and worth naming: a SIGKILLed
+  loop now leaves its session running to completion as an orphan — one
+  session's tokens, spent finishing and closing its own work, which is the
+  trade this bug was about. `test/shim.test.ts` signals a real group and
+  asserts the session's side effect still landed.
+
 - `ladder.ts` — pure decision functions for the failure ladder (transient ≠
   failure ≠ apparatus). Unit-tested; change with tests.
 - `supervisor.ts` — the fleet (v1, H-18): one child process per roster loop
   (the shim is spawnSync, so a loop process can only drive one loop), respawn
   decided by `respawnDecide` in the ladder (halt sentinel → await clearance;
   healthy clean exit → fresh spawn; crash/short-lived → exponential backoff,
-  BACKOFF sentinel). Drain = SIGTERM cascade: loop processes defer signals
-  past the in-flight session, so iterations always finish their close-out.
+  BACKOFF sentinel). Drain = SIGTERM cascade: a loop process sits inside a
+  blocking `spawnSync`, so its handler cannot run until the session returns —
+  the deferral is real, and everything the loop does after a session (run-end,
+  the ladder, `record-spend`) is synchronous, so it completes before the
+  handler's first chance to fire. What that deferral never covered is a signal
+  aimed at the process GROUP rather than the loop, which is where H-467's
+  orphaned artifacts came from: see the session process group under `shim.ts`.
   Child stdout/err goes to state/<loop>/console.log; supervisor decisions to
   state/supervisor/events.log. 'supervisor' is a reserved loop name.
 - `service.ts` — reboot resilience: launchd plist (KeepAlive on crash only —
   a drain exits 0 and stays down) / systemd user unit. Units embed
-  install-time PATH and REV_HOME because service managers strip env.
+  install-time PATH and REV_HOME because service managers strip env. Both must
+  outwait rev's own drain, and both defaults were far too short: launchd's
+  `ExitTimeOut` is 20s and systemd's `TimeoutStopSec` 90s against iterations
+  that legitimately run ten minutes, after which the manager SIGKILLs and
+  sweeps the job's process group. Both are pinned to
+  `DEFAULT_DRAIN_GRACE_SECONDS + 60` (one exported number, no drift), and
+  systemd gets `KillMode=mixed` so a stop signals the supervisor, not every
+  process in the cgroup (H-467).
 - `sentinels.ts` / `config.ts` — sentinel files + roster loading. A loop's
   optional `skills = [...]` (paths) are appended whole to its constitution at
   spawn — how a Drive-touching loop carries crew `skills/file-stewardship.md`

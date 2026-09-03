@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { codexArgs, codexMcpArg, notionalCost, parseCodexEvents, tomlString } from '../src/shim.js';
 import { parse } from 'smol-toml';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // Real event lines captured from codex exec --json (codex-cli 0.150.1,
 // 2026-08-27). The stream is undocumented; this fixture is the contract.
@@ -104,4 +108,47 @@ describe('codexArgs (H-520)', () => {
       'model_providers={or={base_url="https://x",wire_api="responses"}}',
     ]);
   });
+});
+
+// H-467: the agent session must live in its own process group, so a
+// group-directed signal — launchd stopping the job, systemd killing the
+// cgroup, a hangup on a shell-started fleet — cannot sever a turn between its
+// file writes and its Helmo close. The loop process above it dies either way;
+// what has to survive is the session finishing its own close-out, so that is
+// what this asserts. Drop `detached` from the shim's spawn options and the
+// session dies mid-run, the marker is never written, and the alarm rings.
+describe('session process group (H-467)', () => {
+  it('a signal to the whole process group does not reach the in-flight session', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'rev-grp-'));
+    const marker = join(home, 'session-closed');
+    const file = join(home, 'driver.mts');
+    writeFileSync(
+      file,
+      `import { runSession } from ${JSON.stringify(join(import.meta.dirname, '..', 'src', 'shim.ts'))};\n` +
+        `runSession({}, { name: 'grouptest', runtime: 'mock', model: 'm', version: '0', cwd: '/tmp',\n` +
+        `  mock_cmd: 'sleep 8; echo closed > ${marker}' }, 'prompt');\n`,
+    );
+
+    const child = spawn('npx', ['tsx', file], {
+      detached: true, // the driver leads its own group, so the kill below is contained
+      stdio: ['ignore', 'ignore', 'pipe'],
+      cwd: join(import.meta.dirname, '..'),
+      env: { ...process.env, REV_HOME: home },
+    });
+
+    let err = '';
+    child.stderr!.on('data', (d: Buffer) => (err += d));
+
+    // Signal the group once the session is genuinely in flight. This kills the
+    // driver, the way a real drain kills the loop process.
+    await new Promise((r) => setTimeout(r, 4000));
+    expect(err, 'driver failed before the session started').toBe('');
+    process.kill(-child.pid!, 'SIGTERM');
+    await new Promise((r) => child.on('exit', r));
+    expect(existsSync(marker), 'session killed before it could finish').toBe(false); // still sleeping
+
+    // Give the orphaned session the rest of its run.
+    await new Promise((r) => setTimeout(r, 6000));
+    expect(existsSync(marker), 'the session did not survive the group signal').toBe(true);
+  }, 30_000);
 });
