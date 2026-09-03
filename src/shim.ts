@@ -24,6 +24,16 @@ export function cleanEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
+// Every session commits as its seat (H-787). Author is left to the machine's
+// git config — Arthur stays responsible for the work — and the harness's own
+// model trailer is left alone, because it is true and it is the vendors'
+// channel for tool provenance. Committer is git's own field for "who made
+// this commit", so `git log --committer=mason` answers that in any repo
+// without depending on an agent having read an instruction.
+export function sessionEnv(l: LoopConfig): NodeJS.ProcessEnv {
+  return { ...cleanEnv(), GIT_COMMITTER_NAME: l.name, GIT_COMMITTER_EMAIL: `${l.name}@crew.local` };
+}
+
 export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: string, model = l.model, choice?: RunChoice): SessionResult {
   const runtime = choice?.runtime ?? l.runtime;
   // Apparatus pre-flight, fail closed: never launch a half-instructed agent.
@@ -148,7 +158,7 @@ function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string
         '--dangerously-skip-permissions',
         '--output-format', 'json',
       ],
-      { cwd: l.cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, env: cleanEnv(), stdio: ['ignore', 'pipe', 'pipe'], ...SESSION_GROUP },
+      { cwd: l.cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, env: sessionEnv(l), stdio: ['ignore', 'pipe', 'pipe'], ...SESSION_GROUP },
     );
     if (res.error) return { rc: 78, cls: 'apparatus', outputTail: `claude CLI not runnable: ${res.error.message}` };
     const stdout = res.stdout ?? '';
@@ -283,7 +293,7 @@ function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string,
       cwd: l.cwd,
       encoding: 'utf8',
       maxBuffer: 32 * 1024 * 1024,
-      env: cleanEnv(),
+      env: sessionEnv(l),
       input: `${systemPrompt(l)}\n\n--- Iteration prompt ---\n\n${prompt}`,
       ...SESSION_GROUP,
     },
@@ -319,7 +329,7 @@ function runMock(l: LoopConfig, prompt: string, model: string): SessionResult {
   const res = spawnSync('bash', ['-c', l.mock_cmd], {
     cwd: l.cwd,
     encoding: 'utf8',
-    env: { ...cleanEnv(), REV_LOOP: l.name, REV_PROMPT: prompt, REV_MODEL: model, HELMO_ACTOR: JSON.stringify(loopActor(l, model)) },
+    env: { ...sessionEnv(l), REV_LOOP: l.name, REV_PROMPT: prompt, REV_MODEL: model, HELMO_ACTOR: JSON.stringify(loopActor(l, model)) },
     ...SESSION_GROUP,
   });
   const rc = res.status ?? 1;

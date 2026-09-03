@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { codexArgs, codexMcpArg, notionalCost, parseCodexEvents, tomlString } from '../src/shim.js';
+import { codexArgs, codexMcpArg, notionalCost, parseCodexEvents, runSession, sessionEnv, tomlString } from '../src/shim.js';
+import type { GlobalConfig, LoopConfig } from '../src/types.js';
 import { parse } from 'smol-toml';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -151,4 +152,40 @@ describe('session process group (H-467)', () => {
     await new Promise((r) => setTimeout(r, 6000));
     expect(existsSync(marker), 'the session did not survive the group signal').toBe(true);
   }, 30_000);
+});
+
+// H-787: the seat is stamped into git's own identity fields by the spawn env,
+// not by asking an agent to write a trailer. Author stays the machine's git
+// config (Arthur is responsible for the work); the harness's model trailer is
+// left alone. Drop either var from sessionEnv and the commit below comes back
+// authored and committed by the same person, and the alarm rings.
+describe('session git identity (H-787)', () => {
+  const loop = { name: 'mason', runtime: 'mock', model: 'm', version: '0', cwd: '/tmp' } as LoopConfig;
+
+  it('sets committer to the seat and touches neither author nor the rest of the env', () => {
+    const env = sessionEnv(loop);
+    expect(env['GIT_COMMITTER_NAME']).toBe('mason');
+    expect(env['GIT_COMMITTER_EMAIL']).toBe('mason@crew.local');
+    expect(env['GIT_AUTHOR_NAME']).toBeUndefined();
+    expect(env['GIT_AUTHOR_EMAIL']).toBeUndefined();
+    expect(env['PATH']).toBe(process.env['PATH']); // still the cleaned parent env
+  });
+
+  it('a real session commit carries the seat as committer and the human as author', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'rev-git-'));
+    const git = (...a: string[]) => execFileSync('git', a, { cwd: repo, encoding: 'utf8' }).trim();
+    git('init', '-q');
+    git('config', 'user.name', 'Arthur Coulston');
+    git('config', 'user.email', 'arthur.coulston@gmail.com');
+    writeFileSync(join(repo, 'f.txt'), 'work\n');
+
+    const res = runSession({} as GlobalConfig, { ...loop, cwd: repo, mock_cmd: 'git add -A && git commit -q -m "session work"' }, 'prompt');
+    expect(res.rc, res.outputTail).toBe(0);
+
+    const [an, ae, cn, ce] = git('log', '-1', '--format=%an%x00%ae%x00%cn%x00%ce').split('\x00');
+    expect(cn).toBe('mason');
+    expect(ce).toBe('mason@crew.local');
+    expect(an).toBe('Arthur Coulston');
+    expect(ae).toBe('arthur.coulston@gmail.com');
+  });
 });

@@ -73,7 +73,8 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   of tripping again on money already accounted for (H-412).
 - `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent
-  CLAUDE/ANTHROPIC/CODEX env — the auth-leak fix; don't weaken it), the session
+  CLAUDE/ANTHROPIC/CODEX env — the auth-leak fix; don't weaken it) and
+  `sessionEnv()` over it (the seat's git committer identity, H-787), the session
   **process group**, per-session
   token metering, transient-API detection, and the strict MCP surface (sessions
   see ONLY Helmo + the loop's `mcp_extra`; only the Helmo server is handed the
@@ -365,6 +366,15 @@ the narrowest on the page and the first to wrap on a phone.
   `rev resume` resets the fail/limit streaks: a resume is a statement the
   cause was looked at, so the loop gets its full retry budget back rather
   than one retry that re-blocks in seconds and files a duplicate.
+- **A loop session commits as its seat** (H-787, Arthur's ruling). `sessionEnv`
+  puts `GIT_COMMITTER_NAME=<loop>` / `GIT_COMMITTER_EMAIL=<loop>@crew.local`
+  into every spawned session's environment, so `git log --committer=mason`
+  answers "what did that seat commit" in any repo without depending on an
+  agent having read an instruction. Author is left to the machine's git config
+  — Arthur stays responsible for the work, and blame keeps naming him — and
+  the harness's own `Co-Authored-By: Claude <model>` trailer is deliberately
+  left alone: it is the vendors' standard channel for tool provenance and it
+  is true. Use `sessionEnv(l)`, not `cleanEnv()`, at any new spawn site.
 - Liveness is identity, never a bare pid. A RUNNING marker records the command
   that owns it (`runningStamp()` — use it anywhere RUNNING is written), and
   `pidAlive` requires the live process to still be running that command. Pids
