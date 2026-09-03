@@ -22,9 +22,13 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   an unproductive pass: motion accumulates but cannot re-wake the loop until
   the floor elapses (H-336: a live desk session woke ward ~$1/2min against an
   empty queue; H-545: bosun's own sweep records were the motion that woke it,
-  16 straight iterations to the burn breaker). The '*' prompt also tells a
-  no-change pass to end WITHOUT filing or noting — its own exhaust is fresh
-  motion, so a no-change record re-wakes the loop it closes. After
+  16 straight iterations to the burn breaker). BOTH prompts tell a no-change
+  pass to end WITHOUT filing or noting — its own exhaust is fresh motion, so a
+  no-change record re-wakes the loop it closes. The scoped prompt says it in
+  the terms a scoped seat actually meets (queue empty, or every ticket blocked,
+  time-gated, or with the human) and carves out an unasked human question,
+  which triage duty still requires; only the '*' prompt carried the
+  instruction until H-740. After
   each iteration it writes the session's metered spend back to the
   most-touched ticket via helm-cli `record-spend` (H-19) — as the rev
   actor, since Rev is the meter, not the spender — net of anything the agent
@@ -159,9 +163,17 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   update does not count. It matters because `ladderDecide` returns `continue`
   on production and `continue` skips the wake gate entirely: an agent that
   honestly recorded "nothing actionable" was certifying itself busy and buying
-  another full iteration. Known gap, latent rather than observed: a scoped
-  loop's wake still fires on `ready_count > 0` alone, so a ready ticket the
-  agent keeps declining re-wakes it each poll. That belongs to the wake gate.
+  another full iteration. The filter is the floor, not the whole fix (H-740):
+  an update carrying an `evidence` diff IS advancing, so a scoped seat's honest
+  "still blocked, base still green" pass cleared it and bought the next
+  iteration anyway — observed on mason 2026-09-03, iterations 14 and 15 both
+  `produced=true action=continue` at ~$1.30 each against a queue blocked on
+  Arthur. Narrowing the filter would be wrong (the commit proving a build green
+  is exactly what a ticket should carry when work HAS advanced), so the fix is
+  the instruction: teach every seat the contract the ladder scores it against.
+  Known gap, latent rather than observed: a scoped loop's wake still fires on
+  `ready_count > 0` alone, so a ready ticket the agent keeps declining re-wakes
+  it each poll. That belongs to the wake gate.
 - **The usage poller never touches the token except in one header** (H-278/
   H-280). Read from the keychain per poll and discarded when the call returns;
   never held for the process lifetime, never written to disk, never in argv —

@@ -429,6 +429,48 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
     expect(out).toContain('$0.00 of $50.00 spent');
   });
 
+  it('a scoped loop is told how to signal idle — the ladder scores it on that contract (H-740)', () => {
+    const e = setup(`[loops.scoped-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
+`);
+    seedTicket(e, 'Something to draw');
+    const out = rev(e, ['run', 'scoped-loop', '--count', '1']);
+    expect(out).toContain('producing nothing is the idle signal this loop reads');
+    // Named because a scoped seat's queue stalls in ways a store-wide sweep's
+    // "nothing has changed" does not describe.
+    expect(out).toContain('blocked, time-gated, or already sitting with the human');
+    // Triage duty still outranks idling: the carve-out must survive rewording.
+    expect(out).toContain('question only the human can answer');
+  });
+
+  it('evidence-only update counts as production — why the idle instruction has to exist (H-740)', () => {
+    // The constraint the instruction compensates for. H-412 stopped a note-only
+    // update re-certifying a loop as busy, but attaching evidence IS a real
+    // diff, so an honest "still blocked, base still green" pass clears helmo's
+    // advancing filter and buys another full-price iteration. Narrowing the
+    // filter is the wrong fix (a commit proving a build green is exactly what a
+    // ticket should carry) — so this stays true, and the prompt does the work.
+    // If it ever goes false, the instruction above can be relaxed.
+    const e = setup(`[loops.eviloop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+set -e
+ID=$(node ${HELM_CLI} list --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+node ${HELM_CLI} update --ticket $ID --note "still blocked; base still green" --evidence-kind commit --evidence-ref repo@abc1234
+'''
+`);
+    seedTicket(e, 'Blocked on a human');
+    rev(e, ['run', 'eviloop', '--count', '1']);
+    const events = readFileSync(join(e.home, 'state', 'eviloop', 'events.log'), 'utf8');
+    expect(events).toMatch(/run-end\s+iter=1 .*produced=true .*action=continue/);
+    expect(existsSync(join(e.home, 'state', 'eviloop', 'IDLE'))).toBe(false);
+  });
+
   it("store-wide loop ('*', H-92) draws work from any workstream under the wildcard prompt", () => {
     const e = setup(`[loops.judge]
 workstream = "*"

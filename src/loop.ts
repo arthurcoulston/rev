@@ -227,10 +227,19 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           `because you will not know you need them until you do (ToolSearch 'select:mcp__helmo__helmo_create_ticket'). `
         : `Your Helmo tools (helmo_*) are already loaded — create_ticket and return_to_human included; use them for all work tracking. `) +
       `A tool you did not load is never a reason to reach past Helmo: its store is guarded, and going around it once took the whole fleet down. `;
+    // Both draws must teach the idle contract, because the ladder scores every
+    // seat against it (H-740). Only the store-wide branch used to, and a scoped
+    // seat cannot guess: every profile and doctrine tells an agent to record
+    // what it found, so a blocked queue produced an honest "still blocked, base
+    // still green" update — a real diff, so it clears helmo's advancing filter
+    // and buys another full-price pass. H-412 closed that door for note-only
+    // updates; evidence walked through the next one. The instruction is the fix,
+    // not a narrower filter: the commit proving a build green is exactly the
+    // evidence a ticket should carry when work HAS advanced.
     const draw =
       l.workstream === '*'
         ? `Use your Helmo tools: first list tickets assigned to you, then survey fresh activity and unclaimed filings across all workstreams — your constitution says what your work is. If nothing has materially changed since your last pass, end the session WITHOUT filing a ticket or writing a note: producing nothing is the idle signal this loop reads, and a no-change sweep record is itself fresh motion that wakes you again (H-545). Otherwise work to a natural stopping point, `
-        : `Use your Helm tools: first list tickets assigned to you, then ready work in workstream '${l.workstream}'. Work ONE ticket to a natural stopping point, `;
+        : `Use your Helm tools: first list tickets assigned to you, then ready work in workstream '${l.workstream}'. If nothing there is workable — the queue is empty, or every ticket is blocked, time-gated, or already sitting with the human — end the session WITHOUT filing a ticket or writing a note: producing nothing is the idle signal this loop reads, and recording the no-change finding re-certifies you as busy and buys another full-price pass, evidence attached or not (H-545, H-740). The one exception is a question only the human can answer that is not already pending — return that once, then stop. Otherwise work ONE ticket to a natural stopping point, `;
     const prompt =
       `Loop iteration ${i} for agent '${l.name}'. Working directory: ${l.cwd}. ` +
       toolset +
