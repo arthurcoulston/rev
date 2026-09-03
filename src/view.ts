@@ -2,6 +2,7 @@
 // Deliberately plain read-only dashboard: the machine at a glance.
 // Helm shows the work; this shows the loops that do it.
 import { createServer } from 'node:http';
+import { ESTATE_TOKENS } from './estate-tokens.generated.js';
 import { readCodexUsage, readUsage, usageLine, worstSeverity } from './usage.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -93,26 +94,75 @@ createServer((req, res) => {
     .join('\n');
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
   res.end(`<!doctype html><meta charset="utf-8"><title>Rev</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="refresh" content="10">
   <style>
-    body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; max-width: 1250px; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #ddd; vertical-align: top; }
-    th { font-size: 12px; text-transform: uppercase; color: #666; }
+${ESTATE_TOKENS}
+    /* Chrome, ink and shape come from the estate's design tokens, vendored
+       (R-11 H-714): one visual system across Helmo, the roadmap, rev, the
+       health page and the estate shell. The aliases are the whole seam — rev
+       keeps its own names and every rule below is written against them, so a
+       look ratified upstream restyles this page without it being touched.
+       ESTATE_TOKENS goes first: the aliases read from it, and it brings the
+       dark values under prefers-color-scheme, which is what a page with no
+       theme switch needs. Rev had no dark half at all before this. */
+    :root {
+      color-scheme: light dark;
+      --page: var(--background); --ink: var(--foreground);
+      /* Rev runs a four-step grey ladder where shadcn has two; the steps in
+         between are mixed rather than picked, so a look change carries them. */
+      --ink-2: color-mix(in oklab, var(--foreground) 72%, var(--background));
+      --ink-3: var(--muted-foreground);
+      --ink-4: color-mix(in oklab, var(--muted-foreground) 62%, var(--background));
+      --hairline: var(--border);
+      /* No radius ramp: nothing on this page is rounded. */
+
+      /* Not adopted, deliberately. shadcn's neutral base ships no status ramp,
+         and its own --accent is a hover SURFACE, not an interactive colour —
+         mapping onto either would be translation, not adoption. These are the
+         values Helmo and the roadmap already carry, so rev is not a third
+         palette: whichever way H-771 lands, the swap here is mechanical.
+         Colour always rides with a text label, never alone (H-713). */
+      --good-text: #006300; --critical: #d03b3b; --link: #2a78d6;
+      /* Rev's own, and the one value the other two views have no place for:
+         they use amber as a wash behind a badge, rev uses it as small text, and
+         #fab219 as text on white is unreadable. #b60 is rev's existing amber,
+         kept; its dark sibling below IS the shared #fab219. */
+      --warn-text: #b60;
+    }
+    @media (prefers-color-scheme: dark) { :root:not(.light) {
+      /* The status colours are the light half of a light-only page. On the
+         estate's dark surface #b00-family red and #b60 amber drop under 4.5:1,
+         so each gets the lightened step of the same hue. --good-text and --link
+         take the dark values Helmo and the roadmap already use. */
+      --good-text: #0ca30c; --critical: #ef6f6c; --warn-text: #fab219; --link: #3987e5;
+    } }
+    body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; max-width: 1250px;
+      background: var(--page); color: var(--ink); }
+    a { color: var(--link); }
+    /* Seven columns of machine detail do not fit a phone and should not try to.
+       The wrapper is what keeps the page from being dragged sideways with them:
+       the table scrolls, the heading and usage lines stay put. */
+    .tablewrap { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; min-width: 700px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+    th { font-size: 12px; text-transform: uppercase; color: var(--ink-3); }
     .name { font-family: ui-monospace, monospace; }
     .st { font-weight: 600; }
-    .st-RUNNING { color: #167c2e; } .st-IDLE { color: #666; } .st-BLOCKED, .st-CRASHED, .st-WEDGED { color: #b00; }
-    .st-LIMIT, .st-PARKED, .st-BACKOFF { color: #b60; } .st-STOP, .st-HOLD, .st-halted { color: #999; }
-    .trace { font-family: ui-monospace, monospace; font-size: 11px; color: #555; }
-    .usage { font-family: ui-monospace, monospace; font-size: 12px; color: #555; margin: 0 0 12px; }
-    .usage.warning { color: #a60; } .usage.critical { color: #b00; font-weight: 600; }
-    .blockreason { font-weight: 400; font-size: 12px; color: #b00; }
-    .dim { color: #bbb; }
-    h1 span { color: #999; font-weight: normal; font-size: 15px; }
+    .st-RUNNING { color: var(--good-text); } .st-IDLE { color: var(--ink-3); } .st-BLOCKED, .st-CRASHED, .st-WEDGED { color: var(--critical); }
+    .st-LIMIT, .st-PARKED, .st-BACKOFF { color: var(--warn-text); } .st-STOP, .st-HOLD, .st-halted { color: var(--ink-4); }
+    .trace { font-family: ui-monospace, monospace; font-size: 11px; color: var(--ink-2); }
+    .usage { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ink-2); margin: 0 0 12px; }
+    .usage.warning { color: var(--warn-text); } .usage.critical { color: var(--critical); font-weight: 600; }
+    .blockreason { font-weight: 400; font-size: 12px; color: var(--critical); }
+    /* Was #bbb against .st-halted's #999 — two greys two percent apart, which
+       is not a distinction anyone reads. One faint step now serves both. */
+    .dim { color: var(--ink-4); }
+    h1 span { color: var(--ink-4); font-weight: normal; font-size: 15px; }
   </style>
   <h1>Rev <span>the machine, read-only · supervisor ${pidAlive('supervisor') ? `running (pid ${pidAlive('supervisor')})` : 'down'} · home ${esc(revHome())} · work lives in <a href="http://localhost:4400">Helm</a></span></h1>
   <p class="usage ${worstSeverity(readUsage())}">${esc(usageLine(readUsage(), 'Claude'))}</p>
   <p class="usage ${worstSeverity(readCodexUsage())}">${esc(usageLine(readCodexUsage(), 'Codex'))}</p>
-  <table><tr><th>Loop</th><th>State</th><th>Workstream</th><th>Runtime</th><th>Pace</th><th>Spend</th><th>Recent trace</th></tr>
-  ${rows || '<tr><td colspan="7">No loops in the roster yet.</td></tr>'}</table>`);
+  <div class="tablewrap"><table><tr><th>Loop</th><th>State</th><th>Workstream</th><th>Runtime</th><th>Pace</th><th>Spend</th><th>Recent trace</th></tr>
+  ${rows || '<tr><td colspan="7">No loops in the roster yet.</td></tr>'}</table></div>`);
 }).listen(port, host, () => console.log(`Rev view (read-only): http://localhost:${port} — home: ${revHome()}`));

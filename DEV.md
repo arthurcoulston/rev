@@ -134,11 +134,70 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 ## Commands
 
 - `npm run build`, `npm test` (ladder units + e2e with mock runtime).
+- `npm run vendor:tokens` refreshes the vendored estate design tokens; add
+  `-- --check` to fail on drift instead. See below.
 - Start the machine: `node dist/cli.js run` (supervisor over the whole roster).
   Drive one loop: `node dist/cli.js run <loop> [--count N]` (foreground;
   `--count 1` is the assess-early lever).
 - Dashboard: `node dist/view.js` (`REV_VIEW_PORT`, default 4500; binds
   127.0.0.1, `REV_VIEW_HOST` to change) — restart after rebuild.
+
+## The estate design tokens (R-11 H-714)
+
+`src/estate-tokens.generated.ts` is a **vendored copy** of the estate shell's
+`tokens/estate-tokens.css` — the source of the visual system every estate
+surface shares. `scripts/vendor-estate-tokens.mjs` refreshes it (also
+`--check`); `test/estate-tokens.test.ts` fails on drift.
+
+Vendoring, not importing, is the point: rev is published standalone, so a clone
+with no estate checkout beside it must build and run unchanged. That is also
+why the drift test uses `it.skipIf` rather than an early return — with no
+source to compare against it reports **skipped**, which is visible in the run
+summary, where a `console.log` from a passing test is not.
+
+**Rev was the third adopter and the only one starting from nothing.** Helmo and
+the roadmap already had token layers to alias; rev's view had fifteen literal
+hex colours and no dark half at all — it served a white page at midnight. So
+here the seam had to be built rather than re-pointed: a `:root` block of
+aliases, and every rule below written against them. `ESTATE_TOKENS` is inlined
+ahead of that block, which is what brings the dark values in under
+`prefers-color-scheme` on a page with no theme switch.
+
+Adopted: surfaces (`--page`), the grey ladder, `--hairline`. No radius ramp —
+nothing on this page is rounded.
+
+Not adopted, deliberately: the status colours and the interactive `--link`
+blue. shadcn's neutral base ships no status ramp, and its own `--accent` is a
+hover *surface*, not an interactive colour. Rev carries the values Helmo and
+the roadmap already carry, so it is not a third palette — **H-771** is where
+Arthur decides whether these move into the estate's own token set, and if he
+says yes the swap here is mechanical.
+
+Two things rev needed that the other two did not:
+
+- **Dark siblings for the status colours.** They were tuned for a white page
+  that no longer exists at night. `#b00` red and `#b60` amber both drop under
+  4.5:1 on the estate's dark surface, so each has a lightened step of the same
+  hue in the `prefers-color-scheme` block. Amber's dark step *is* the shared
+  `#fab219`; its light step stays rev's `#b60`, because the other two views use
+  amber as a wash behind a badge and rev uses it as small text, where `#fab219`
+  on white is unreadable.
+- **A fourth grey.** Rev distinguished `#999` and `#bbb`; two percent apart is
+  not a distinction anyone reads, so one faint step (`--ink-4`) serves both.
+
+**Two traps worth knowing.** An alias that comes out self-referential
+(`--hairline: var(--hairline)`) is *guaranteed-invalid* in CSS: the property
+ends up with no value, every rule using it is dropped, and nothing goes red —
+the page just quietly loses all its borders. That shipped for one render in the
+roadmap and only a pixel sample caught it. And a hex left behind in a rule is
+invisible to tsc and still renders — it is simply a colour picked for white
+being shown on near-black. `test/estate-tokens.test.ts` asserts against both.
+
+Rev also gained the `viewport` meta the other two views already had; without it
+a phone rendered the page at 980px, zoomed out to illegibility. Seven columns
+of machine detail still do not fit a phone and should not try to, so
+`.tablewrap` scrolls the table horizontally and leaves the heading and usage
+lines where they are.
 
 ## Invariants that bite
 

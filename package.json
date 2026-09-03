@@ -6,7 +6,8 @@
   "scripts": {
     "test": "vitest run",
     "build": "tsc",
-    "view": "tsx src/view.ts"
+    "view": "tsx src/view.ts",
+    "vendor:tokens": "node scripts/vendor-estate-tokens.mjs"
   },
   "keywords": [],
   "author": "",
