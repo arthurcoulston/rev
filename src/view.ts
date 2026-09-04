@@ -4,7 +4,7 @@
 import { createServer } from 'node:http';
 import { AVATAR_MARKS, ESTATE_AVATARS } from './estate-avatars.generated.js';
 import { ESTATE_TOKENS } from './estate-tokens.generated.js';
-import { REACH_SCRIPT, reachLink } from './reach.js';
+import { LOCAL_HOSTNAMES, REACH_SCRIPT, reachLink } from './reach.js';
 import { readCodexUsage, readUsage, usageLine, worstSeverity } from './usage.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,6 +15,30 @@ const port = Number(process.env['REV_VIEW_PORT'] ?? 4500);
 const host = process.env['REV_VIEW_HOST'] ?? '127.0.0.1';
 const esc = (s: unknown) =>
   String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+
+// Poll the parts whose source state changes without reloading the document.
+// A focused control belongs to the reader until they leave it, so polling
+// pauses instead of replacing a link or scroll region beneath keyboard focus.
+const VIEW_REFRESH_SCRIPT = `
+let refreshRunning = false;
+setInterval(async function () {
+  if (refreshRunning || document.hidden || (document.activeElement && document.activeElement !== document.body)) return;
+  refreshRunning = true;
+  try {
+    const response = await fetch(location.pathname, { cache: 'no-store' });
+    if (!response.ok) return;
+    const next = new DOMParser().parseFromString(await response.text(), 'text/html');
+    for (const key of ['title', 'claude', 'codex', 'loops']) {
+      const current = document.querySelector('[data-refresh="' + key + '"]');
+      const replacement = next.querySelector('[data-refresh="' + key + '"]');
+      if (!current || !replacement) continue;
+      if (!${JSON.stringify(LOCAL_HOSTNAMES)}.includes(location.hostname))
+        replacement.querySelectorAll('a[data-reach]').forEach(function (a) { a.setAttribute('href', a.getAttribute('data-reach')); });
+      current.replaceWith(replacement);
+    }
+  } catch {}
+  finally { refreshRunning = false; }
+}, 10000);`;
 
 // ---------- actors ----------
 
@@ -127,9 +151,8 @@ createServer((req, res) => {
     })
     .join('\n');
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-  res.end(`<!doctype html><meta charset="utf-8"><title>Rev</title>
+  res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Rev</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="10">
   <style>
 ${ESTATE_TOKENS}
     /* Chrome, ink and shape come from the estate's design tokens, vendored
@@ -192,16 +215,18 @@ ${ESTATE_TOKENS}
     /* Was #bbb against .st-halted's #999 — two greys two percent apart, which
        is not a distinction anyone reads. One faint step now serves both. */
     .dim { color: var(--ink-4); }
-    h1 span { color: var(--ink-4); font-weight: normal; font-size: 15px; }
-  </style>
+    h1 .title-line { color: var(--ink-3); font-weight: normal; font-size: 15px; }
+  </style></head><body>
   ${ESTATE_AVATARS}
-  <h1>Rev <span>the machine, read-only · supervisor ${pidAlive('supervisor') ? `running (pid ${pidAlive('supervisor')})` : 'down'} · home ${esc(revHome())} · work lives in ${reachLink('helmo-view', 'Helm')}</span></h1>
-  <p class="usage ${worstSeverity(readUsage())}">${esc(usageLine(readUsage(), 'Claude'))}</p>
-  <p class="usage ${worstSeverity(readCodexUsage())}">${esc(usageLine(readCodexUsage(), 'Codex'))}</p>
-  <div class="tablewrap"><table><tr><th>Loop</th><th>State</th><th>Workstream</th><th>Runtime</th><th>Pace</th><th>Spend</th><th>Recent trace</th></tr>
+  <h1 data-refresh="title">Rev <span class="title-line">the machine, read-only · supervisor ${pidAlive('supervisor') ? `running (pid ${pidAlive('supervisor')})` : 'down'} · home ${esc(revHome())} · work lives in ${reachLink('helmo-view', 'Helm')}</span></h1>
+  <p class="usage ${worstSeverity(readUsage())}" data-refresh="claude">${esc(usageLine(readUsage(), 'Claude'))}</p>
+  <p class="usage ${worstSeverity(readCodexUsage())}" data-refresh="codex">${esc(usageLine(readCodexUsage(), 'Codex'))}</p>
+  <div class="tablewrap" tabindex="0" role="region" aria-label="Loop status" data-refresh="loops"><table><tr><th>Loop</th><th>State</th><th>Workstream</th><th>Runtime</th><th>Pace</th><th>Spend</th><th>Recent trace</th></tr>
   ${rows || '<tr><td colspan="7">No loops in the roster yet.</td></tr>'}</table></div>
-  <!-- Last, and the only script on the page: it rewrites the cross-surface
-       links above for a reader who is not on this Mac, so it has to run after
-       they exist. src/reach.ts says why the server cannot decide it. -->
-  <script>${REACH_SCRIPT}</script>`);
+  <!-- Both scripts run after the content they act on. The first rewrites
+       cross-surface links for remote readers; the second refreshes live state
+       without reloading the document or taking keyboard focus. -->
+  <script>${REACH_SCRIPT}</script>
+  <script>${VIEW_REFRESH_SCRIPT}</script>
+  </body></html>`);
 }).listen(port, host, () => console.log(`Rev view (read-only): http://localhost:${port} — home: ${revHome()}`));
