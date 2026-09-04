@@ -132,6 +132,16 @@ export function loadRoster(): Roster {
   const rawLoops = (raw['loops'] ?? {}) as Record<string, Record<string, unknown>>;
   for (const [name, l] of Object.entries(rawLoops)) {
     if (name === 'supervisor') throw new Error("'supervisor' is a reserved name (the fleet supervisor's own state dir).");
+    if (l['routing'] !== undefined && !['rotation', 'headroom'].includes(String(l['routing']))) {
+      throw new Error(`Loop '${name}': routing must be 'rotation' or 'headroom'.`);
+    }
+    if (l['routing'] === 'headroom') {
+      const refs = l['rotation'];
+      if (!l['tier'] || !Array.isArray(refs) || refs.length < 2 ||
+          refs.some((ref) => String(ref).includes(':') && String(ref).split(':')[1] !== l['tier'])) {
+        throw new Error(`Loop '${name}': headroom routing needs a tier and at least two rotation choices on that same tier.`);
+      }
+    }
     const selection = resolveSelection(name, l, providers);
     const allMock = [...selection.choices, ...selection.fallbacks].every((c) => c.runtime === 'mock');
     for (const key of ['workstream', 'cwd', 'constitution']) {
@@ -148,6 +158,7 @@ export function loadRoster(): Roster {
       probe_model: selection.primary.probe_model,
       choices: selection.choices,
       fallbacks: selection.fallbacks,
+      routing: (l['routing'] ?? 'rotation') as LoopConfig['routing'],
       constitution: l['constitution'] ? resolveHome(String(l['constitution'])) : '',
       version: String(l['version'] ?? '0.1'),
       pace: Number(l['pace'] ?? 1),

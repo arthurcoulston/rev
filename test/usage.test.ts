@@ -46,7 +46,7 @@ describe('parseUsage (H-278)', () => {
   it('survives a shape it has never seen rather than throwing', () => {
     expect(parseUsage({}).limits).toEqual([]);
     expect(parseUsage(null).limits).toEqual([]);
-    expect(parseUsage({ limits: [{}] }).limits[0]).toMatchObject({ kind: 'unknown', percent: 0 });
+    expect(parseUsage({ limits: [{}] }).limits).toEqual([]);
   });
 });
 
@@ -152,6 +152,6 @@ describe('parseCodexRateLimits (H-479)', () => {
   it('survives a shape it has never seen rather than throwing', () => {
     expect(parseCodexRateLimits(null).limits).toEqual([]);
     expect(parseCodexRateLimits({}).limits).toEqual([]);
-    expect(parseCodexRateLimits({ primary: {} }).limits[0]).toMatchObject({ percent: 0, resets_at: null });
+    expect(parseCodexRateLimits({ primary: {} }).limits).toEqual([]);
   });
 });

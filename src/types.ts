@@ -75,6 +75,7 @@ export interface LoopConfig {
   // Provider-general selection (H-479; crew skills/model-selection.md).
   choices: RunChoice[];    // the rotation cycle; length 1 when no rotation is set
   fallbacks: RunChoice[];  // tried in order when every scheduled choice's cap is out
+  routing?: 'rotation' | 'headroom'; // headroom ranks same-tier choices by fresh allowance/reset data
 }
 
 // Session outcome classes, in the ladder's terms.

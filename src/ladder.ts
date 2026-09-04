@@ -193,11 +193,31 @@ export function choiceDecide(c: {
   fallbacks: RunChoice[];
   iteration: number; // 1-based
   exhausted: (choice: RunChoice) => boolean;
+  headroom?: (choice: RunChoice) => number | null; // percentage points/hour until the binding reset
 }): { choice: RunChoice; switched?: string } {
   const n = c.choices.length;
   const at = ((c.iteration - 1) % n + n) % n;
   const scheduled = c.choices[at]!;
   const candidates = [...c.choices.slice(at), ...c.choices.slice(0, at), ...c.fallbacks];
+  if (c.headroom) {
+    // Only the rotation is approved for proactive balancing. Fallbacks may
+    // change tier and remain cap-out only. Unknown telemetry keeps the
+    // operator's first available choice until both sides can be compared.
+    const available = c.choices.filter((cand) => !c.exhausted(cand));
+    const scores = available.map((choice) => ({ choice, score: c.headroom!(choice) }));
+    if (scores.length && scores.every(({ score }) => score !== null && Number.isFinite(score) && score >= 0)) {
+      const best = scores.reduce((a, b) => b.score! > a.score! ? b : a);
+      return {
+        choice: best.choice,
+        switched: `headroom routing: ${best.choice.provider}/${best.choice.model} — ${scores.map(({ choice, score }) => `${choice.provider} ${score!.toFixed(2)}%/h`).join(', ')}`,
+      };
+    }
+    const first = [...c.choices, ...c.fallbacks].find((cand) => !c.exhausted(cand));
+    return {
+      choice: first ?? c.choices[0]!,
+      switched: 'headroom routing: fresh comparable usage unavailable — using configured provider order',
+    };
+  }
   for (const cand of candidates) {
     if (c.exhausted(cand)) continue;
     if (cand === scheduled) return { choice: scheduled };

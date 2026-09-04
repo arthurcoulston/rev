@@ -85,6 +85,19 @@ mid = "x-mid"
     expect(l.model).toBe('c-mid'); // primary = first of the cycle
   });
 
+  it('headroom routing is opt-in and refuses a proactive tier downgrade', () => {
+    home(LOOP + 'provider = "codex"\ntier = "mid"\nrotation = ["codex", "claude"]\nrouting = "headroom"\n', TABLES);
+    expect(loadRoster().loops['a']!.routing).toBe('headroom');
+    home(LOOP + 'provider = "codex"\ntier = "mid"\n', TABLES);
+    expect(loadRoster().loops['a']!.routing).toBe('rotation');
+    for (const rotation of ['["codex", "claude:small"]', '["codex"]']) {
+      home(LOOP + `provider = "codex"\ntier = "mid"\nrotation = ${rotation}\nrouting = "headroom"\n`, TABLES);
+      expect(() => loadRoster()).toThrow(/same tier/);
+    }
+    home(LOOP + 'provider = "codex"\ntier = "mid"\nrouting = "mystery"\n', TABLES);
+    expect(() => loadRoster()).toThrow(/routing must/);
+  });
+
   it('fails the whole roster loudly on a reference that cannot run', () => {
     home(LOOP + 'provider = "codex"\ntier = "frontier"\n', TABLES);
     expect(() => loadRoster()).toThrow(/no model for tier 'frontier'/);

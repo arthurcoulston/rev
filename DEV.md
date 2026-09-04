@@ -101,6 +101,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   plan auth reports no dollar cost, so cost is notional from the roster's
   `[providers.codex.prices]` — absent prices, the burn breaker is blind to
   that provider and the token-log shows `cost_usd=?`.
+  Astra additionally needs a current CLI: 0.150.1 was rejected by the server;
+  Homebrew 0.153.2 passed a real Astra run on 2026-09-04 (H-892). Updating the
+  desktop app alone does not update the CLI Rev invokes.
   **Every session is its own process group** (`SESSION_GROUP`, H-467). Without
   it the agent CLI shares the group of the loop and the supervisor above it, so
   anything that signals that group — launchd stopping the job, systemd killing

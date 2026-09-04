@@ -22,7 +22,7 @@
 // an error, or a crash dump. `usage.json` holds PARSED values only — agents
 // read it into prompts, so no raw upstream text passes through.
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, openSync, closeSync, readSync, fstatSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { revHome } from './config.js';
@@ -75,6 +75,7 @@ export function parseUsage(body: unknown, now = new Date().toISOString()): Usage
 
   if (Array.isArray(d['limits'])) {
     for (const raw of d['limits'] as Record<string, unknown>[]) {
+      if (!raw || typeof raw['percent'] !== 'number' || !Number.isFinite(raw['percent']) || raw['percent'] < 0) continue;
       const scope = raw['scope'] as { model?: { display_name?: string } } | null;
       const model = scope?.model?.display_name;
       const kind = String(raw['kind'] ?? 'unknown');
@@ -90,7 +91,7 @@ export function parseUsage(body: unknown, now = new Date().toISOString()): Usage
   } else {
     for (const [key, label] of [['five_hour', 'session'], ['seven_day', 'weekly (all models)']] as const) {
       const b = d[key] as Record<string, unknown> | null;
-      if (b && typeof b === 'object' && b['utilization'] != null) {
+      if (b && typeof b === 'object' && typeof b['utilization'] === 'number' && Number.isFinite(b['utilization']) && b['utilization'] >= 0) {
         limits.push({
           kind: key,
           label,
@@ -183,6 +184,37 @@ export function exhaustedLimit(s: UsageSnapshot | null, atPercent = 95): UsageLi
   return hit.reduce((worst, l) => (l.percent > worst.percent ? l : worst));
 }
 
+export const USAGE_MAX_AGE_MS = 30 * 60 * 1000;
+
+/** Fresh, unexpired bars that apply to this model. A Fable-only cap must
+ *  never take Sonnet/Opus (or a small probe) out of service. */
+export function usageForModel(s: UsageSnapshot | null, model: string, now = Date.now()): UsageSnapshot | null {
+  if (!s || s.stale || !Array.isArray(s.limits)) return null;
+  const age = now - Date.parse(s.fetched_at);
+  if (!Number.isFinite(age) || age < -60_000 || age > USAGE_MAX_AGE_MS) return null;
+  const tokens = model.toLowerCase().split(/[^a-z0-9]+/);
+  const limits = s.limits.filter((l) => {
+    if (!Number.isFinite(l.percent) || l.percent < 0 || !l.resets_at || Date.parse(l.resets_at) <= now || !Number.isFinite(Date.parse(l.resets_at))) return false;
+    if (l.kind !== 'weekly_scoped') return true;
+    const scope = /\(([^)]+)\)/.exec(l.label)?.[1]?.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    // Unknown scope remains conservative; known scopes match model words,
+    // never a partial substring ("pro" must not match "professional").
+    return !scope?.length || scope.every((word) => tokens.includes(word));
+  });
+  return limits.length ? { ...s, limits } : null;
+}
+
+/** Spendable percentage points/hour until the binding reset. Percentages
+ *  are plan allowance, not comparable token counts or API dollar estimates. */
+export function headroomRate(s: UsageSnapshot | null, model: string, atPercent = 95, now = Date.now()): number | null {
+  const fresh = usageForModel(s, model, now);
+  if (!fresh || !fresh.limits.some((l) => l.kind.startsWith('weekly') || l.kind === 'seven_day' || l.label.includes('weekly'))) return null;
+  if (exhaustedLimit(fresh, atPercent)) return 0;
+  return Math.min(...fresh.limits.map((l) =>
+    Math.max(0, atPercent - l.percent) / Math.max(1 / 60, (Date.parse(l.resets_at!) - now) / 3_600_000),
+  ));
+}
+
 // ---------------------------------------------------------------------------
 // Codex usage. No poller and no credential: every `codex exec` run writes its
 // own rate-limit standing (used_percent, window, reset) into the session's
@@ -205,6 +237,7 @@ interface CodexRateLimitWindow {
 }
 
 interface CodexRateLimits {
+  limit_id?: string | null;
   primary?: CodexRateLimitWindow | null;
   secondary?: CodexRateLimitWindow | null;
   plan_type?: string | null;
@@ -224,14 +257,15 @@ function codexWindowLabel(minutes: number | undefined): string {
 export function parseCodexRateLimits(raw: unknown, now = new Date().toISOString()): UsageSnapshot {
   const rl = (raw ?? {}) as CodexRateLimits;
   const limits: UsageLimit[] = [];
+  if (rl.limit_id && rl.limit_id !== 'codex') return { fetched_at: now, stale: false, limits };
   for (const [kind, w] of [['codex_primary', rl.primary], ['codex_secondary', rl.secondary]] as const) {
-    if (!w || typeof w !== 'object') continue;
+    if (!w || typeof w !== 'object' || typeof w.used_percent !== 'number' || !Number.isFinite(w.used_percent) || w.used_percent < 0) continue;
     limits.push({
       kind,
       label: rl.plan_type ? `${codexWindowLabel(w.window_minutes)} [${rl.plan_type}]` : codexWindowLabel(w.window_minutes),
       percent: Number(w.used_percent ?? 0),
       severity: 'unknown',
-      resets_at: w.resets_at ? new Date(w.resets_at * 1000).toISOString() : null,
+      resets_at: typeof w.resets_at === 'number' && Number.isFinite(w.resets_at) && Math.abs(w.resets_at) < 8.64e12 ? new Date(w.resets_at * 1000).toISOString() : null,
       active: Boolean(rl.rate_limit_reached_type),
     });
   }
@@ -277,7 +311,27 @@ export function recordCodexUsage(threadId: string | undefined): UsageSnapshot | 
     if (!threadId) return null;
     const rollout = findRollout(threadId);
     if (!rollout) return null;
-    const lines = readFileSync(rollout, 'utf8').split('\n');
+    const snap = readRolloutUsage(rollout);
+    if (snap) saveCodexUsage(snap);
+    return snap;
+  } catch {
+    return null;
+  }
+}
+
+/** Read only a bounded tail and retain only usage events. A desk meeting's
+ *  shared allowance matters just as much as a loop's; conversation content
+ *  is neither returned nor persisted. */
+function readRolloutUsage(path: string): UsageSnapshot | null {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, 'r');
+    const size = fstatSync(fd).size;
+    const bytes = Buffer.alloc(Math.min(size, 512 * 1024));
+    const start = size - bytes.length;
+    const count = readSync(fd, bytes, 0, bytes.length, start);
+    const lines = bytes.toString('utf8', 0, count).split('\n');
+    if (start > 0) lines.shift(); // possibly partial leading JSON line
     for (let i = lines.length - 1; i >= 0; i--) {
       let e: Record<string, unknown>;
       try {
@@ -286,14 +340,47 @@ export function recordCodexUsage(threadId: string | undefined): UsageSnapshot | 
         continue;
       }
       const payload = e['payload'] as { type?: string; rate_limits?: unknown } | undefined;
-      if (e['type'] === 'event_msg' && payload?.type === 'token_count' && payload.rate_limits) {
-        const snap = parseCodexRateLimits(payload.rate_limits);
-        writeFileSync(codexUsagePath(), JSON.stringify(snap, null, 1) + '\n');
-        return snap;
+      if (e['type'] === 'event_msg' && payload?.type === 'token_count' && payload.rate_limits && typeof e['timestamp'] === 'string' && Number.isFinite(Date.parse(e['timestamp']))) {
+        const snap = parseCodexRateLimits(payload.rate_limits, e['timestamp']);
+        if (snap.limits.length) return snap;
       }
     }
     return null;
   } catch {
     return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
+}
+
+function saveCodexUsage(snap: UsageSnapshot): void {
+  const previous = readCodexUsage();
+  if (Date.parse(previous?.fetched_at ?? '') >= Date.parse(snap.fetched_at)) return;
+  writeFileSync(codexUsagePath(), JSON.stringify(snap, null, 1) + '\n');
+}
+
+/** Refresh from the twenty most recently modified rollouts in today's and
+ *  yesterday's local-date folders. No network, credential, or model call. */
+export function refreshCodexUsage(now = new Date()): UsageSnapshot | null {
+  let best = readCodexUsage();
+  try {
+    const files: { path: string; mtime: number }[] = [];
+    for (const daysBack of [0, 1]) {
+      const day = new Date(now.getTime() - daysBack * 86_400_000);
+      const dir = join(codexHome(), 'sessions', String(day.getFullYear()), String(day.getMonth() + 1).padStart(2, '0'), String(day.getDate()).padStart(2, '0'));
+      if (!existsSync(dir)) continue;
+      for (const name of readdirSync(dir)) {
+        if (!name.endsWith('.jsonl')) continue;
+        const path = join(dir, name);
+        try { files.push({ path, mtime: statSync(path).mtimeMs }); } catch { /* a rotating rollout is optional */ }
+      }
+    }
+    for (const file of files.sort((a, b) => b.mtime - a.mtime).slice(0, 20)) {
+      const snap = readRolloutUsage(file.path);
+      if (snap && Date.parse(snap.fetched_at) <= now.getTime() + 60_000 &&
+          (!best || Date.parse(snap.fetched_at) > Date.parse(best.fetched_at))) best = snap;
+    }
+    if (best) saveCodexUsage(best);
+  } catch { /* keep the last snapshot; routing handles freshness */ }
+  return best;
 }

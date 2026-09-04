@@ -4,9 +4,10 @@
 import { stateDir } from './config.js';
 import { WakeCheck, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, openEscalation, recordSpend, scopeLabel, seatHolds, seatId, wakeCheck, workstreamInfo } from './helm.js';
 import { burnWindow, markBurnFloor } from './burn.js';
-import { exhaustedLimit, pollUsage, readCodexUsage, readUsage } from './usage.js';
+import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageForModel } from './usage.js';
+import { choiceExhausted, selectRun } from './routing.js';
 import { raiseWedgeAlarm, wedgeDecide } from './health.js';
-import { breakerDecide, choiceDecide, ladderDecide, limitDecide, probeDecide, rollingMean, seatDecide, velocityToPause } from './ladder.js';
+import { breakerDecide, ladderDecide, limitDecide, probeDecide, rollingMean, seatDecide, velocityToPause } from './ladder.js';
 import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streak, streakReset } from './sentinels.js';
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
@@ -175,12 +176,12 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     i += 1;
     firstPoll = false; // an iteration IS the restart pickup — see the wake gate
     const started = Date.now();
-    // Which provider runs this iteration (H-479): the rotation cycle at this
-    // position, skipping any provider whose cap the fresh snapshot says is
-    // out, then fallbacks. Decided per iteration, never sticky.
+    // Include desk meetings in Codex's shared allowance, without a model call.
+    if ([...l.choices, ...l.fallbacks, ...(g.probe ? [g.probe] : [])].some((c) => c.runtime === 'codex')) refreshCodexUsage();
+    const providerUsage = () => ({ claude: readUsage(), codex: readCodexUsage() });
     const exhaustedChoice = (c: RunChoice) =>
-      c.runtime === 'mock' ? false : Boolean(exhaustedLimit(c.runtime === 'codex' ? readCodexUsage() : readUsage(), g.limit_exhausted_percent));
-    const sel = choiceDecide({ choices: l.choices, fallbacks: l.fallbacks, iteration: i, exhausted: exhaustedChoice });
+      choiceExhausted(c, providerUsage(), g.limit_exhausted_percent);
+    const sel = selectRun(l, providerUsage(), i, g.limit_exhausted_percent);
     const choice = sel.choice;
     if (sel.switched) {
       logEvent(l.name, 'provider-switch', `iter=${i} ${sel.switched}`);
@@ -320,7 +321,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     if (res.cls === 'transient') {
       const snap =
         run.runtime === 'codex' ? readCodexUsage() : g.usage_poll_seconds > 0 ? await pollUsage() : readUsage();
-      const ex = exhaustedLimit(snap, g.limit_exhausted_percent);
+      const ex = exhaustedLimit(usageForModel(snap, model), g.limit_exhausted_percent);
       if (ex) logEvent(l.name, 'limit-identified', `cap="${ex.label}" percent=${ex.percent} resets=${ex.resets_at ?? '-'}`);
       action = limitDecide({
         limitStreak,
@@ -337,7 +338,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       // outage) keeps the ladder — switching providers over a network blip
       // would turn every wobble into a migration.
       if (ex && action.act !== 'continue') {
-        const alt = choiceDecide({ choices: l.choices, fallbacks: l.fallbacks, iteration: i + 1, exhausted: exhaustedChoice });
+        const alt = selectRun(l, providerUsage(), i + 1, g.limit_exhausted_percent);
         if (alt.choice.provider !== run.provider && !exhaustedChoice(alt.choice)) {
           logEvent(l.name, 'limit-switch', `cap="${ex.label}" — continuing on ${alt.choice.provider}/${alt.choice.model}`);
           console.log(`rev: cap "${ex.label}" is out — continuing on ${alt.choice.provider}/${alt.choice.model}.`);

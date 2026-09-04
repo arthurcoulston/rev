@@ -4,7 +4,7 @@
 // repeated failure. No agent CLI, no tokens.
 import { describe, it, expect, beforeEach } from 'vitest';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -275,6 +275,52 @@ echo "rev-mock-usage tokens=10 cost_usd=0.01"
     const tokenLog = readFileSync(join(e.home, 'token-log'), 'utf8');
     expect(tokenLog).toContain('model=model-a');
     expect(tokenLog).toContain('model=model-b');
+  });
+
+  it('headroom selection reaches the Codex adapter and meters the selected high model (H-892)', () => {
+    const e = setup(`[providers.claude.models]
+high = "claude-fable-5-1"
+[providers.codex.models]
+high = "gpt-6-astra"
+[providers.codex.prices]
+"gpt-6-astra" = { input = 10, output = 50 }
+[loops.balancer]
+workstream = "rev-test"
+cwd = "/tmp"
+constitution = "PROFILE.md"
+provider = "claude"
+tier = "high"
+rotation = ["claude", "codex"]
+routing = "headroom"
+`);
+    writeFileSync(join(e.home, 'PROFILE.md'), '# Test identity\n');
+    const now = Date.now();
+    for (const [file, percent, hours] of [['usage.json', 80, 144], ['usage-codex.json', 15, 48]] as const) {
+      writeFileSync(join(e.home, file), JSON.stringify({ fetched_at: new Date(now).toISOString(), stale: false, limits: [
+        { kind: 'weekly_all', label: 'weekly', percent, severity: 'normal', active: false, resets_at: new Date(now + hours * 3600000).toISOString() },
+      ] }));
+    }
+    // Both executables are fixtures: a broken selector cannot launch a real
+    // model, and the rollout refresh cannot read the developer's home.
+    const bin = join(e.home, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'claude'), '#!/usr/bin/env node\nthrow new Error("wrong provider selected");\n');
+    writeFileSync(join(bin, 'codex'), '#!/usr/bin/env node\n' +
+      'if (process.argv[process.argv.indexOf("--model") + 1] !== "gpt-6-astra") process.exit(1);\n' +
+      'console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"fixture Astra ran"}}));\n' +
+      'console.log(JSON.stringify({type:"turn.completed",usage:{input_tokens:100,output_tokens:10}}));\n');
+    chmodSync(join(bin, 'claude'), 0o755);
+    chmodSync(join(bin, 'codex'), 0o755);
+    e.env['PATH'] = `${bin}:${e.env['PATH']}`;
+    e.env['CODEX_HOME'] = join(e.home, 'codex-home');
+    seedTicket(e, 'High-tier work for the balancer');
+    expect(rev(e, ['run', 'balancer', '--count', '1'])).toContain('fixture Astra ran');
+    const events = readFileSync(join(e.home, 'state', 'balancer', 'events.log'), 'utf8');
+    expect(events).toMatch(/provider-switch.*headroom routing: codex\/gpt-6-astra/);
+    expect(events).toMatch(/run-start.*provider=codex/);
+    const tokens = readFileSync(join(e.home, 'token-log'), 'utf8');
+    expect(tokens).toContain('model=gpt-6-astra');
+    expect(tokens).toContain('cost_usd=0.0015');
   });
 
   it('a loop that cannot reach Helm at all is declared wedged, not left polling (H-448)', async () => {

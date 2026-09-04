@@ -2,7 +2,8 @@
 // rev — run and control loops. Control verbs are sentinel writes; anything
 // that reads state is safe from any context (the watch officer uses these).
 import { loadRoster, stateDir } from './config.js';
-import { pollUsage, readCodexUsage, readUsage, usageLine, usagePath } from './usage.js';
+import { pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageLine, usagePath } from './usage.js';
+import { selectRun } from './routing.js';
 import { runLoop } from './loop.js';
 import { serviceInstall, serviceStart, serviceStatusLine, serviceUninstall } from './service.js';
 import { logEvent, pidAlive, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
@@ -148,6 +149,7 @@ switch (cmd) {
     // are written by each codex run from its own rollout, so they are as fresh
     // as the last iteration and need no credential.
     const snap = rest.includes('--poll') ? await pollUsage() : readUsage();
+    if (rest.includes('--poll')) refreshCodexUsage();
     for (const [label, s] of [['Claude', snap], ['Codex', readCodexUsage()]] as const) {
       console.log(usageLine(s, label));
       if (s?.limits.length) {
@@ -158,6 +160,16 @@ switch (cmd) {
       if (s?.stale) console.log(`  STALE — last read failed (${s.error ?? 'no reason recorded'}); these are the last good numbers.`);
     }
     if (!snap) console.log(`  Nothing at ${usagePath()} yet. The supervisor polls every 10 min; 'rev usage --poll' reads now.`);
+    break;
+  }
+  case 'routing': {
+    const usage = { claude: readUsage(), codex: readCodexUsage() };
+    console.log('Working-model preview from current usage; does not start or resume a loop.');
+    for (const loop of Object.values(loops)) {
+      const selected = selectRun(loop, usage, 1, g.limit_exhausted_percent);
+      console.log(`${loop.name}: ${selected.choice.provider}/${selected.choice.model} (${loop.routing ?? 'rotation'})`);
+      if (selected.switched) console.log(`  ${selected.switched}`);
+    }
     break;
   }
   case 'tail': {
@@ -174,6 +186,7 @@ switch (cmd) {
   resume <loop>            clear STOP/HOLD/BLOCKED; a running supervisor picks the loop back up
   pace <loop> <v>          velocity: fraction (0,1], 'park', or 'clear'
   usage [--poll]           Max plan usage bars (session, weekly, per-model)
+  routing                  preview working-model choices from current usage (no runs)
   status                   supervisor + every loop's state at a glance
   service <verb>           install|uninstall|start|status — survive reboots (launchd/systemd)
   tail <loop>              print the path of the loop's event trace

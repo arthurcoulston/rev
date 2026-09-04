@@ -27,16 +27,19 @@ helmo_mcp_server = "/path/to/helm/dist/server.js"
 small = "claude-haiku-4-5-20251001"
 mid = "claude-sonnet-5"
 frontier = "claude-opus-5"
+high = "claude-fable-5-1"
 
 [providers.codex.models]
 small = "gpt-5.6-luna"
 mid = "gpt-5.6-terra"
 frontier = "gpt-5.6-sol"
+high = "gpt-6-astra"
 
 [providers.codex.prices]
 "gpt-5.6-luna" = { input = 0.20, output = 1.20 }
 "gpt-5.6-terra" = { input = 2.0, output = 12.0 }
-"gpt-5.6-sol" = { input = 5.0, output = 30.0 }
+"gpt-5.6-sol" = { input = 4.0, output = 20.0 }
+"gpt-6-astra" = { input = 10.0, output = 50.0 }
 
 # Adapter config applied to every run of this provider (codex: -c overrides).
 # Fleet sessions ignore ~/.codex/config.toml entirely (H-520) — whatever a run
@@ -62,6 +65,7 @@ constitution = "constitutions/example-worker.md"  # relative to ~/.rev
 version = "0.1"                       # bump when the constitution changes — it's provenance
 pace = 1.0                            # velocity fraction; 0.5 = half speed
 # rotation = ["claude", "codex"]      # alternate providers per iteration, same tier ("codex:small" pins a tier)
+# routing = "headroom"                # rank same-tier rotation by allowance/hour until reset; first choice when telemetry is stale
 # fallback = ["codex:mid"]            # tried when every scheduled provider's cap is out
 # prompt = "Extra per-iteration instructions appended to the standard prompt."
 # mcp_extra = "mcp/example-worker.json"  # additional MCP servers for this loop's sessions
