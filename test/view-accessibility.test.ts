@@ -15,8 +15,14 @@ describe('view accessibility', () => {
   });
 
   it('uses the approved readable ink step for the title line', () => {
-    expect(view).toContain('h1 .title-line { color: var(--ink-3)');
+    expect(view).toContain('h1 .title-line { min-width: 0; overflow-wrap: anywhere; color: var(--ink-3)');
     expect(view).not.toMatch(/h1 \.title-line \{ color: var\(--ink-4\)/);
+  });
+
+  it('allows the title line to shrink on phones and keeps halted status readable', () => {
+    expect(view).toMatch(/h1 \.title-line \{[^}]*min-width: 0;[^}]*overflow-wrap: anywhere;/);
+    expect(view).toContain('.st-halted { color: var(--ink-3); }');
+    expect(view).not.toMatch(/\.st-halted \{ color: var\(--ink-4\)/);
   });
 
   it('polls in place and yields while a reader has keyboard focus', () => {

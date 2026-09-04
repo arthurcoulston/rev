@@ -207,15 +207,16 @@ ${ESTATE_TOKENS}
     .mark { width: 1.15em; height: 1.15em; vertical-align: -0.22em; margin-right: 4px; }
     .st { font-weight: 600; }
     .st-RUNNING { color: var(--good-text); } .st-IDLE { color: var(--ink-3); } .st-BLOCKED, .st-CRASHED, .st-WEDGED { color: var(--critical); }
-    .st-LIMIT, .st-PARKED, .st-BACKOFF { color: var(--warn-text); } .st-STOP, .st-HOLD, .st-halted { color: var(--ink-4); }
+    .st-LIMIT, .st-PARKED, .st-BACKOFF { color: var(--warn-text); } .st-STOP, .st-HOLD { color: var(--ink-4); }
+    .st-halted { color: var(--ink-3); }
     .trace { font-family: ui-monospace, monospace; font-size: 11px; color: var(--ink-2); }
     .usage { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ink-2); margin: 0 0 12px; }
     .usage.warning { color: var(--warn-text); } .usage.critical { color: var(--critical); font-weight: 600; }
     .blockreason { font-weight: 400; font-size: 12px; color: var(--critical); }
-    /* Was #bbb against .st-halted's #999 — two greys two percent apart, which
-       is not a distinction anyone reads. One faint step now serves both. */
+    /* Faint ink is limited to auxiliary empty-trace copy. A halted state is a
+       status label and uses the readable muted step above. */
     .dim { color: var(--ink-4); }
-    h1 .title-line { color: var(--ink-3); font-weight: normal; font-size: 15px; }
+    h1 .title-line { min-width: 0; overflow-wrap: anywhere; color: var(--ink-3); font-weight: normal; font-size: 15px; }
   </style></head><body>
   ${ESTATE_AVATARS}
   <h1 data-refresh="title">Rev <span class="title-line">the machine, read-only · supervisor ${pidAlive('supervisor') ? `running (pid ${pidAlive('supervisor')})` : 'down'} · home ${esc(revHome())} · work lives in ${reachLink('helmo-view', 'Helm')}</span></h1>
