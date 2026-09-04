@@ -42,11 +42,15 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   into `~/.rev/usage.json`. Parse the `limits` array, not the top-level
   `five_hour` / `seven_day` objects: it is self-describing and it NAMES the
   model a scoped weekly cap belongs to, which is the only way the Fable cap is
-  legible rather than an opaque codename. Codex: no poller and no credential
+  legible rather than an opaque codename. Codex: no network poller and no credential
   (H-479) — every `codex exec` run writes its rate-limit standing into its own
   rollout file under `$CODEX_HOME/sessions`, and the shim lifts the freshest
-  block into `~/.rev/usage-codex.json` after each run, so the numbers are as
-  fresh as the last iteration. `rev usage [--poll]`, `rev status` and the view
+  block into `~/.rev/usage-codex.json` after each run. Before selecting a
+  provider, Rev also reads bounded tails of the twenty newest rollouts in
+  today's/yesterday's folders, so local desk meetings count too (H-892).
+  Only parsed shared-Codex usage survives; Spark's separate bucket is ignored.
+  Event timestamps are preserved: rereading an old event never refreshes it.
+  `rev usage [--poll]`, `rev status` and the view
   header read both. Every failure is soft — keep the last numbers, mark
   stale, back off; nothing in rev may wait on a usage bar.
 - `ancestry.ts` — abandoned-tree detection (H-281). Every loop and the
@@ -161,6 +165,8 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 ## Commands
 
 - `npm run build`, `npm test` (ladder units + e2e with mock runtime).
+- `node dist/cli.js routing` previews working-model selection without starting
+  work. `usage --poll` refreshes Claude remotely and Codex from local rollouts.
 - `npm run vendor:tokens` refreshes the vendored estate design tokens,
   `npm run vendor:avatars` the vendored crew avatar sprite, and
   `npm run vendor:reach` the vendored estate reach table; add `-- --check`
@@ -230,6 +236,16 @@ a phone rendered the page at 980px, zoomed out to illegibility. Seven columns
 of machine detail still do not fit a phone and should not try to, so
 `.tablewrap` scrolls the table horizontally and leaves the heading and usage
 lines where they are.
+
+That wrapper was briefly filed as a defect and is not one (H-889). The estate's
+overflow detector used to flag any element whose rect reached past the
+viewport, which is every cell of a table that scrolls on purpose; it reported
+OVERFLOW on this page while printing, in the same line, that the document was
+390px wide in a 390px viewport. The detector now stops at the first ancestor
+whose `overflow-x` is not `visible`, so this page reads clean. Estate's `npm
+run smoke` drives it at 390px in both themes along with the other products —
+that check lives there because it needs a browser and this repo stays
+zero-dependency; run it after touching `view.ts`'s HTML or CSS.
 
 ## The crew avatar sprite (R-11 H-714)
 
@@ -380,6 +396,22 @@ dependency this repo should grow for one link.
   transient path all follow the pinned provider. The pin yields to the
   loop's own `probe_tier` when the pinned cap is out, and never touches a
   mock loop (tests stay hermetic).
+- **Balance allowance before exhaustion, within the same tier** (H-892).
+  Per-loop `routing = "headroom"` opts in; `rotation` lists at least two
+  same-tier choices in preference order. `headroomRate` takes the minimum of
+  `(limit_exhausted_percent - used_percent) / hours_until_reset` across the
+  model's applicable bars; a weekly bar is required. The highest rate wins,
+  with ties staying on the first configured provider. It is a routing
+  heuristic, not a promise to consume exactly 95%: concurrent sessions and
+  delayed telemetry cannot reserve future consumption. Never translate
+  notional API dollars into subscription percentage or generate work to fill
+  a quota. Fallback tiers remain cap-out only; original `rotation` remains
+  the default for unopted loops. Missing, failed, older-than-30-minute or
+  expired telemetry uses configured order. Fable's scoped cap only affects
+  matching models, including in the transient path. `routing.ts` composes
+  the same selector for loops and `rev routing`; each headroom decision logs
+  its rates or why it used the configured order. Roster/model changes need a
+  graceful worker restart; in-flight sessions keep their original model.
 - **A provider choice is decided fresh each iteration, never sticky** (H-479).
   `choiceDecide` takes the rotation cycle at the iteration's position, skips
   any provider whose cap the fresh snapshot says is out (then fallbacks), and
