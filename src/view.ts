@@ -4,6 +4,7 @@
 import { createServer } from 'node:http';
 import { AVATAR_MARKS, ESTATE_AVATARS } from './estate-avatars.generated.js';
 import { ESTATE_TOKENS } from './estate-tokens.generated.js';
+import { REACH_SCRIPT, reachLink } from './reach.js';
 import { readCodexUsage, readUsage, usageLine, worstSeverity } from './usage.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -194,9 +195,13 @@ ${ESTATE_TOKENS}
     h1 span { color: var(--ink-4); font-weight: normal; font-size: 15px; }
   </style>
   ${ESTATE_AVATARS}
-  <h1>Rev <span>the machine, read-only · supervisor ${pidAlive('supervisor') ? `running (pid ${pidAlive('supervisor')})` : 'down'} · home ${esc(revHome())} · work lives in <a href="http://localhost:4400">Helm</a></span></h1>
+  <h1>Rev <span>the machine, read-only · supervisor ${pidAlive('supervisor') ? `running (pid ${pidAlive('supervisor')})` : 'down'} · home ${esc(revHome())} · work lives in ${reachLink('helmo-view', 'Helm')}</span></h1>
   <p class="usage ${worstSeverity(readUsage())}">${esc(usageLine(readUsage(), 'Claude'))}</p>
   <p class="usage ${worstSeverity(readCodexUsage())}">${esc(usageLine(readCodexUsage(), 'Codex'))}</p>
   <div class="tablewrap"><table><tr><th>Loop</th><th>State</th><th>Workstream</th><th>Runtime</th><th>Pace</th><th>Spend</th><th>Recent trace</th></tr>
-  ${rows || '<tr><td colspan="7">No loops in the roster yet.</td></tr>'}</table></div>`);
+  ${rows || '<tr><td colspan="7">No loops in the roster yet.</td></tr>'}</table></div>
+  <!-- Last, and the only script on the page: it rewrites the cross-surface
+       links above for a reader who is not on this Mac, so it has to run after
+       they exist. src/reach.ts says why the server cannot decide it. -->
+  <script>${REACH_SCRIPT}</script>`);
 }).listen(port, host, () => console.log(`Rev view (read-only): http://localhost:${port} — home: ${revHome()}`));
