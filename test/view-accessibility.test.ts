@@ -19,10 +19,12 @@ describe('view accessibility', () => {
     expect(view).not.toMatch(/h1 \.title-line \{ color: var\(--ink-4\)/);
   });
 
-  it('allows the title line to shrink on phones and keeps halted status readable', () => {
+  it('allows the title line to shrink on phones and keeps every quiet text state readable', () => {
     expect(view).toMatch(/h1 \.title-line \{[^}]*min-width: 0;[^}]*overflow-wrap: anywhere;/);
     expect(view).toContain('.st-halted { color: var(--ink-3); }');
-    expect(view).not.toMatch(/\.st-halted \{ color: var\(--ink-4\)/);
+    expect(view).toContain('.st-STOP, .st-HOLD { color: var(--ink-3); }');
+    expect(view).toContain('.dim { color: var(--ink-3); }');
+    expect(view).not.toContain('color: var(--ink-4)');
   });
 
   it('polls in place and yields while a reader has keyboard focus', () => {

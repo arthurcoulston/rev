@@ -166,11 +166,10 @@ ${ESTATE_TOKENS}
     :root {
       color-scheme: light dark;
       --page: var(--background); --ink: var(--foreground);
-      /* Rev runs a four-step grey ladder where shadcn has two; the steps in
-         between are mixed rather than picked, so a look change carries them. */
+      /* Rev runs one mixed middle step between the estate's foreground and
+         muted text, so a look change carries the whole readable ladder. */
       --ink-2: color-mix(in oklab, var(--foreground) 72%, var(--background));
       --ink-3: var(--muted-foreground);
-      --ink-4: color-mix(in oklab, var(--muted-foreground) 62%, var(--background));
       --hairline: var(--border);
       /* No radius ramp: nothing on this page is rounded. */
 
@@ -207,15 +206,15 @@ ${ESTATE_TOKENS}
     .mark { width: 1.15em; height: 1.15em; vertical-align: -0.22em; margin-right: 4px; }
     .st { font-weight: 600; }
     .st-RUNNING { color: var(--good-text); } .st-IDLE { color: var(--ink-3); } .st-BLOCKED, .st-CRASHED, .st-WEDGED { color: var(--critical); }
-    .st-LIMIT, .st-PARKED, .st-BACKOFF { color: var(--warn-text); } .st-STOP, .st-HOLD { color: var(--ink-4); }
+    .st-LIMIT, .st-PARKED, .st-BACKOFF { color: var(--warn-text); } .st-STOP, .st-HOLD { color: var(--ink-3); }
     .st-halted { color: var(--ink-3); }
     .trace { font-family: ui-monospace, monospace; font-size: 11px; color: var(--ink-2); }
     .usage { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ink-2); margin: 0 0 12px; }
     .usage.warning { color: var(--warn-text); } .usage.critical { color: var(--critical); font-weight: 600; }
     .blockreason { font-weight: 400; font-size: 12px; color: var(--critical); }
-    /* Faint ink is limited to auxiliary empty-trace copy. A halted state is a
-       status label and uses the readable muted step above. */
-    .dim { color: var(--ink-4); }
+    /* Quiet copy still has to read in both themes; --ink-3 is the last
+       approved text step in the estate ladder. */
+    .dim { color: var(--ink-3); }
     h1 .title-line { min-width: 0; overflow-wrap: anywhere; color: var(--ink-3); font-weight: normal; font-size: 15px; }
   </style></head><body>
   ${ESTATE_AVATARS}
