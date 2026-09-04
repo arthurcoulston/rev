@@ -18,8 +18,9 @@ of its role.
 
 ## Universal expectations
 
-- Work is tracked in Helm: claim before working, note progress when reality
+- Work is tracked in Helmo: claim before working, note progress when reality
   changes, close with evidence.
-- Cross-project context (dev sessions only): `~/projects/crew/FLEET.md`.
-- Projects the enclosing instructions mark as **sovereign** — no
-  writes, ever. Guard denials are the boundary working; never route around.
+- Cross-project context (dev sessions only): load the host estate's project map
+  when its enclosing instructions provide one.
+- A project marked **sovereign** by its own or the enclosing instructions is
+  read-only. Guard denials are the boundary working; never route around them.

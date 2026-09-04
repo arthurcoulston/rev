@@ -1,20 +1,22 @@
 # Rev
 
 **Rev keeps agent loops turning.** Process supervision for autonomous AI agent loops that
-draw their work from a [Helm](../helm) work record. Helm is where the human steers; Rev is
+draw their work from a [Helmo](https://github.com/arthurcoulston/helmo) work record. Helmo is where the human steers; Rev is
 the engine room — it decides when agents run, keeps them alive, classifies their failures,
-meters their spend, and files a ticket into Helm's awaiting-human queue when the machine needs
+meters their spend, and files a ticket into Helmo's awaiting-human queue when the machine needs
 a decision.
 
 - Product & architecture: [rev-product-description.md](rev-product-description.md)
 - Agent-led install (the primary path): [AGENT-INSTALL.md](AGENT-INSTALL.md)
 - Ops role for humans-with-agents: [WATCH-OFFICER.md](WATCH-OFFICER.md) — "summon the watch officer"
 
-## Status
+## Status: MVP
 
-v1: the fleet. One supervisor runs every roster loop — respawn with backoff, graceful
-stop-all (drain, never kill), per-loop pace, and reboot resilience as a user service
-(launchd/systemd). End-to-end tested (mock runtime + real store).
+The fleet capability is implemented and used in day-to-day operation: one supervisor runs every
+roster loop, with respawn backoff, graceful stop-all (drain, never kill), per-loop pace, and reboot
+resilience as a user service (launchd/systemd). The current package is `0.1.0` and the project is at
+the MVP stage. Its automated floor includes build and integration tests, and independent review
+still gates acceptance. Rev has not declared the additional 1.0 gates.
 
 ## The shape of it
 
@@ -27,7 +29,7 @@ stop-all (drain, never kill), per-loop pace, and reboot resilience as a user ser
   token-log                 spend meter
 
 rev run                 start the machine: every roster loop under the supervisor;
-                            each loop idles on Helm's event cursor (zero tokens), wakes on
+                            each loop idles on Helmo's event cursor (zero tokens), wakes on
                             ready work, spawns one fresh agent session per iteration
 rev run <loop>          drive one loop in the foreground (debugging; --count 1 = one iteration)
 rev stop                graceful stop-all: in-flight iterations finish, then the machine stops
@@ -40,7 +42,7 @@ npm run view                read-only dashboard at :4500
 Failure ladder (inherited from a battle-tested prototype): transient API/network conditions
 park and retry — never treated as faults; runtime failures retry under a small consecutive cap;
 apparatus faults (missing constitution) fail closed immediately; anything that halts a loop
-arrives in Helm as a well-formed question, not a silent stall.
+arrives in Helmo as a well-formed question, not a silent stall.
 
 The supervisor extends the ladder to processes: a crashed loop respawns on an exponential
 backoff (`BACKOFF` sentinel); a deliberate halt (STOP/HOLD/BLOCKED) is never overridden —
@@ -50,9 +52,17 @@ agents always finish their close-out.
 
 ## Development
 
-```
-npm install && npm run build
-npm test        # ladder units + full e2e against a temp Helm store, mock runtime
+```bash
+npm ci
+npm run build
+REV_TEST_HELMO=/absolute/path/to/helmo npm test
 ```
 
-Requires a built Helm checkout (`helmo_cli` / `helmo_mcp_server` in the roster point at it).
+Rev deliberately depends on a built Helmo checkout for its integration tests and at runtime. The
+test path is configurable with `REV_TEST_HELMO`; when omitted, the suite checks the historical
+sibling location `../helmo` and fails with the missing path if it is unavailable. Runtime paths are
+independent of the test setting and are always explicit as `helmo_cli` and `helmo_mcp_server` in
+the instance roster.
+
+See [AGENT-INSTALL.md](AGENT-INSTALL.md) for the full install and mock-loop verification. Security
+issues should follow [SECURITY.md](SECURITY.md). Rev is available under the [MIT License](LICENSE).

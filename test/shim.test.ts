@@ -156,7 +156,7 @@ describe('session process group (H-467)', () => {
 
 // H-787: the seat is stamped into git's own identity fields by the spawn env,
 // not by asking an agent to write a trailer. Author stays the machine's git
-// config (Arthur is responsible for the work); the harness's model trailer is
+// config (the operator is responsible for the work); the harness's model trailer is
 // left alone. Drop either var from sessionEnv and the commit below comes back
 // authored and committed by the same person, and the alarm rings.
 describe('session git identity (H-787)', () => {
@@ -175,8 +175,8 @@ describe('session git identity (H-787)', () => {
     const repo = mkdtempSync(join(tmpdir(), 'rev-git-'));
     const git = (...a: string[]) => execFileSync('git', a, { cwd: repo, encoding: 'utf8' }).trim();
     git('init', '-q');
-    git('config', 'user.name', 'Arthur Coulston');
-    git('config', 'user.email', 'arthur.coulston@gmail.com');
+    git('config', 'user.name', 'Example Operator');
+    git('config', 'user.email', 'operator@example.test');
     writeFileSync(join(repo, 'f.txt'), 'work\n');
 
     const res = runSession({} as GlobalConfig, { ...loop, cwd: repo, mock_cmd: 'git add -A && git commit -q -m "session work"' }, 'prompt');
@@ -185,7 +185,7 @@ describe('session git identity (H-787)', () => {
     const [an, ae, cn, ce] = git('log', '-1', '--format=%an%x00%ae%x00%cn%x00%ce').split('\x00');
     expect(cn).toBe('mason');
     expect(ce).toBe('mason@crew.local');
-    expect(an).toBe('Arthur Coulston');
-    expect(ae).toBe('arthur.coulston@gmail.com');
+    expect(an).toBe('Example Operator');
+    expect(ae).toBe('operator@example.test');
   });
 });

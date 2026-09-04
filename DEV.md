@@ -481,6 +481,9 @@ dependency this repo should grow for one link.
 
 ## Neighbors
 
-Helmo is the work record (`~/projects/helmo`, must be built — roster points at
-its dist/). Loop identities/constitutions live in `~/projects/crew`.
-Map: `~/projects/crew/FLEET.md`.
+Helmo is the work record and must be built separately; runtime rosters point at
+its `dist/cli.js` and `dist/server.js`, while integration tests use the built
+checkout named by `REV_TEST_HELMO` (falling back to sibling `../helmo`). Loop
+identities and constitutions live outside this repository and are referenced by
+the instance roster. In a larger estate, its own project map owns the remaining
+cross-project context.
