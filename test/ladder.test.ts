@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { breakerDecide, choiceDecide, classifyExit, limitDecide, ladderDecide, probeDecide, respawnDecide, rollingMean, seatDecide, velocityToPause } from '../src/ladder.js';
+import { breakerDecide, choiceDecide, classifyExit, limitDecide, ladderDecide, probeDecide, respawnDecide, rollingMean, seatDecide, velocityToPause, wakeDecide } from '../src/ladder.js';
 
 const base = { produced: true, failStreak: 0, limitStreak: 0, failCap: 2, limitCap: 20, limitWait: 900 };
 
@@ -30,6 +30,23 @@ describe('ladderDecide', () => {
     expect(ladderDecide('failure', { ...base, failStreak: 1 }).act).toBe('continue');
     expect(ladderDecide('failure', { ...base, failStreak: 2 }).act).toBe('continue');
     expect(ladderDecide('failure', { ...base, failStreak: 3 }).act).toBe('blocked');
+  });
+});
+
+describe('wakeDecide (H-92/H-426)', () => {
+  it('motion wakes every loop', () => {
+    expect(wakeDecide({ changedSince: true, firstPoll: false, workstream: 'rev-dev', readyCount: 0 })).toBe(true);
+    expect(wakeDecide({ changedSince: true, firstPoll: false, workstream: '*', readyCount: 0 })).toBe(true);
+  });
+
+  it('standing ready work wakes a scoped loop once after restart', () => {
+    expect(wakeDecide({ changedSince: false, firstPoll: true, workstream: 'rev-dev', readyCount: 1 })).toBe(true);
+    expect(wakeDecide({ changedSince: false, firstPoll: false, workstream: 'rev-dev', readyCount: 1 })).toBe(false);
+  });
+
+  it('standing backlog never wakes a store-wide loop, including its first poll', () => {
+    expect(wakeDecide({ changedSince: false, firstPoll: true, workstream: '*', readyCount: 1 })).toBe(false);
+    expect(wakeDecide({ changedSince: false, firstPoll: false, workstream: '*', readyCount: 1 })).toBe(false);
   });
 });
 

@@ -7,7 +7,7 @@ import { burnWindow, markBurnFloor } from './burn.js';
 import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageForModel } from './usage.js';
 import { choiceExhausted, selectRun } from './routing.js';
 import { raiseWedgeAlarm, wedgeDecide } from './health.js';
-import { breakerDecide, ladderDecide, limitDecide, probeDecide, rollingMean, seatDecide, velocityToPause } from './ladder.js';
+import { breakerDecide, ladderDecide, limitDecide, probeDecide, rollingMean, seatDecide, velocityToPause, wakeDecide } from './ladder.js';
 import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streak, streakReset } from './sentinels.js';
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
@@ -122,7 +122,12 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       // exception is the first successful poll after process start — standing
       // ready work counts once there, so a loop that went down with work queued
       // picks it up on restart instead of waiting for something else to move.
-      const wake = w.changed_since || (firstPoll && l.workstream !== '*' && w.ready_count > 0);
+      const wake = wakeDecide({
+        changedSince: w.changed_since,
+        firstPoll,
+        workstream: l.workstream,
+        readyCount: w.ready_count,
+      });
       firstPoll = false;
       // Idle floor (H-336/H-545): an unproductive pass costs the same whatever
       // it finds, and both burn incidents were wakes minutes apart from a live

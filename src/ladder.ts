@@ -45,6 +45,18 @@ export function ladderDecide(
   }
 }
 
+// A ready queue is standing state, not motion. Scoped loops get one restart
+// pickup so work queued during downtime is not stranded; store-wide loops do
+// not, because their motion-only wake is the triage signal itself (H-92/H-426).
+export function wakeDecide(c: {
+  changedSince: boolean;
+  firstPoll: boolean;
+  workstream: string;
+  readyCount: number;
+}): boolean {
+  return c.changedSince || (c.firstPoll && c.workstream !== '*' && c.readyCount > 0);
+}
+
 // Same-seat guard (H-558): two live sessions sharing one crew name (a rev loop
 // and a desk session or subagent) collided twice, each working over the
 // other's in-flight tickets. Before spending an iteration, the loop asks who

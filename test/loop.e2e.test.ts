@@ -7,9 +7,8 @@ import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { HELMO_CLI as HELM_CLI, HELMO_SERVER } from './helmo.js';
 
-const HELM = join(import.meta.dirname, '..', '..', 'helmo');
-const HELM_CLI = join(HELM, 'dist', 'cli.js');
 const REV_CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 
 interface Env {
@@ -25,7 +24,7 @@ function setup(loopToml: string): Env {
     join(home, 'roster.toml'),
     `[global]
 helmo_cli = "${HELM_CLI}"
-helmo_mcp_server = "${join(HELM, 'dist', 'server.js')}"
+helmo_mcp_server = "${HELMO_SERVER}"
 helmo_db = "${db}"
 poll_seconds = 1
 fail_cap = 1
@@ -49,6 +48,31 @@ function rev(e: Env, args: string[]): string {
 
 function seedTicket(e: Env, title: string): string {
   return (helm(e, ['create', '--title', title, '--body', 'test work: claim me, complete me', '--workstream', 'rev-test', '--type', 'ops']) as { id: string }).id;
+}
+
+async function waitForFile(path: string, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(path)) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${path}`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+function instrumentSuccessfulWakeChecks(e: Env): string {
+  const marker = join(e.home, 'wake-check-completed');
+  const proxy = join(e.home, 'helmo-proxy.mjs');
+  writeFileSync(
+    proxy,
+    `import { appendFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const result = spawnSync(process.execPath, [${JSON.stringify(HELM_CLI)}, ...process.argv.slice(2)], { env: process.env, stdio: 'inherit' });
+if (process.argv[2] === 'wake-check' && result.status === 0) appendFileSync(${JSON.stringify(marker)}, 'ok\\n');
+process.exit(result.status ?? 1);
+`,
+  );
+  const roster = join(e.home, 'roster.toml');
+  writeFileSync(roster, readFileSync(roster, 'utf8').replace(`helmo_cli = "${HELM_CLI}"`, `helmo_cli = "${proxy}"`));
+  return marker;
 }
 
 describe('rev e2e (mock runtime, real helm store)', () => {
@@ -540,7 +564,7 @@ fi
     expect(existsSync(join(e.home, 'state', 'judge', 'IDLE'))).toBe(true);
   });
 
-  it("store-wide loop ('*', H-92) wakes on motion only — standing backlog never wakes it", () => {
+  it("store-wide loop ('*', H-92) wakes on motion only — standing backlog never wakes it", async () => {
     // Echo-only mock: never claims, so ready backlog stays standing when the
     // loop idles. A scoped loop would wake on ready_count>0 every poll; the
     // whole store's backlog would do that to a '*' loop forever.
@@ -554,16 +578,22 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
     rev(e, ['run', 'judge', '--count', '1']); // one no-production iteration -> IDLE at cursor, backlog still ready
     expect(existsSync(join(e.home, 'state', 'judge', 'IDLE'))).toBe(true);
     const eventsBefore = readFileSync(join(e.home, 'state', 'judge', 'events.log'), 'utf8');
+    const polled = instrumentSuccessfulWakeChecks(e);
+    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'judge', '--count', '1'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
+    });
     try {
-      execFileSync('npx', ['tsx', REV_CLI, 'run', 'judge', '--count', '1'], {
-        env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..'), timeout: 4000,
-      });
-      expect.unreachable('a motion-less start must stay idle until killed');
-    } catch {
-      /* killed while idling: expected */
+      await waitForFile(polled);
+      expect(child.exitCode, 'loop exited after a motion-less successful poll').toBeNull();
+      const eventsAfter = readFileSync(join(e.home, 'state', 'judge', 'events.log'), 'utf8');
+      expect(eventsAfter.slice(eventsBefore.length)).not.toMatch(/wake/);
+    } finally {
+      if (child.exitCode === null) {
+        const exited = new Promise((resolve) => child.once('exit', resolve));
+        child.kill('SIGKILL');
+        await exited;
+      }
     }
-    const eventsAfter = readFileSync(join(e.home, 'state', 'judge', 'events.log'), 'utf8');
-    expect(eventsAfter.slice(eventsBefore.length)).not.toMatch(/wake/);
   });
 
   it('repeated failure hits the cap, sets BLOCKED, and escalates into the Helm queue', () => {

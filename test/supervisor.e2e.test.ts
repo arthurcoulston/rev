@@ -8,9 +8,8 @@ import { ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { HELMO_CLI as HELM_CLI, HELMO_SERVER } from './helmo.js';
 
-const HELM = join(import.meta.dirname, '..', '..', 'helmo');
-const HELM_CLI = join(HELM, 'dist', 'cli.js');
 const REV_CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 
 interface Env {
@@ -25,7 +24,7 @@ function setup(loopsToml: string): Env {
     join(home, 'roster.toml'),
     `[global]
 helmo_cli = "${HELM_CLI}"
-helmo_mcp_server = "${join(HELM, 'dist', 'server.js')}"
+helmo_mcp_server = "${HELMO_SERVER}"
 helmo_db = "${db}"
 poll_seconds = 1
 respawn_backoff_seconds = 1
