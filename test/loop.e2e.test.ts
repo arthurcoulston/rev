@@ -584,6 +584,15 @@ constitution = "constitutions/missing.md"
     // A locked store used to kill the loop process outright: helm-cli threw,
     // nothing caught it, and the supervisor found a corpse. A failed poll is
     // transient — the loop must log it and try again on the next one.
+    //
+    // THIS TEST PRINTS `{"error":"SqliteError: database is locked"}` AND
+    // `rev: wake-check failed for 'flaky-loop'` ON A PASSING RUN. Both are the
+    // point: the first is the shim below writing what a locked store writes,
+    // the second is the loop noticing it and carrying on. An R-11 proof review
+    // read them as a symptom and filed them (H-865); they are the alarm
+    // ringing. Do not silence either — the loop logging a failed poll is the
+    // behaviour under test, and a run that printed nothing here would be a
+    // run where the shim never fired.
     const e = setup(`[loops.flaky-loop]
 workstream = "rev-test"
 cwd = "/tmp"
