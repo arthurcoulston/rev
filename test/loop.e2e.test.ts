@@ -109,6 +109,7 @@ fi
     // Second iteration produced nothing -> loop idles at the cursor.
     const idle = join(e.home, 'state', 'test-loop', 'IDLE');
     expect(existsSync(idle)).toBe(true);
+    expect(readFileSync(idle, 'utf8')).toContain('no executable work is owned by this seat or ready in its watched scope');
     const events = readFileSync(join(e.home, 'state', 'test-loop', 'events.log'), 'utf8');
     expect(events).toMatch(/run-end.*produced=true/);
     expect(events).toMatch(new RegExp(`spend\\s+iter=1 ticket=${id} tokens=1200 cost=0\\.25`));
@@ -182,6 +183,7 @@ fi
     const events = readFileSync(join(dir, 'events.log'), 'utf8');
     expect(events).toMatch(/run-end.*iter=1.*produced=false.*action=idle/);
     expect(existsSync(join(dir, 'IDLE'))).toBe(true);
+    expect(readFileSync(join(dir, 'IDLE'), 'utf8')).toContain('1 executable ticket remained after an iteration made no advancing change');
 
     // Every pass idles; none is scored as production, so none skips the gate —
     // and after the first idle, silence: no wake, no second iteration.

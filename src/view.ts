@@ -120,7 +120,9 @@ createServer((req, res) => {
       supervisor: pidAlive('supervisor') || null,
       loops: Object.values(loops).map((l) => {
         const st = state(l.name);
-        const reason = st === 'BLOCKED' || st === 'WEDGED' ? sGet(l.name, st)?.split('\n')[0] : undefined;
+        const reason = st === 'IDLE'
+          ? sGet(l.name, 'IDLE')?.split('\n')[1]
+          : st === 'BLOCKED' || st === 'WEDGED' ? sGet(l.name, st)?.split('\n')[0] : undefined;
         return { name: l.name, state: st, workstream: l.workstream, ...(reason ? { reason } : {}) };
       }),
       usage: { claude: readUsage(), codex: readCodexUsage() },
@@ -136,12 +138,13 @@ createServer((req, res) => {
       // A wedged loop cannot file a ticket about being wedged — Helm is what it
       // cannot reach — so this row is the record (H-448).
       const wedged = st === 'WEDGED' ? `<div class="blockreason">${esc(sGet(l.name, 'WEDGED')?.split('\n')[0])}</div>` : '';
+      const idle = st === 'IDLE' ? `<div class="idlereason">${esc(sGet(l.name, 'IDLE')?.split('\n')[1] ?? 'waiting on the wake cursor')}</div>` : '';
       const events = lastEvents(l.name, 5)
         .map((e) => `<div class="ev">${esc(e)}</div>`)
         .join('');
       return `<tr>
         <td class="name">${actor(l.name)}</td>
-        <td class="st st-${st}">${st}${blocked}${wedged}</td>
+        <td class="st st-${st}">${st}${blocked}${wedged}${idle}</td>
         <td>${esc(l.workstream)}</td>
         <td>${esc(l.runtime)}/${esc(l.model)}</td>
         <td>${esc(sGet(l.name, 'PACE')?.trim() ?? '1')}</td>
@@ -212,6 +215,7 @@ ${ESTATE_TOKENS}
     .usage { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ink-2); margin: 0 0 12px; }
     .usage.warning { color: var(--warn-text); } .usage.critical { color: var(--critical); font-weight: 600; }
     .blockreason { font-weight: 400; font-size: 12px; color: var(--critical); }
+    .idlereason { font-weight: 400; font-size: 12px; color: var(--ink-3); }
     /* Quiet copy still has to read in both themes; --ink-3 is the last
        approved text step in the estate ladder. */
     .dim { color: var(--ink-3); }

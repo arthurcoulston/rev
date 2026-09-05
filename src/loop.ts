@@ -448,9 +448,19 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         // motion silently.
         const after = tryWakeCheck(g, l, 0);
         const cursor = after?.max_seq ?? before.max_seq;
-        sSet(l.name, 'IDLE', String(cursor));
+        const ready = after?.ready_count ?? before.ready_count;
+        const held = after?.held_count ?? before.held_count ?? 0;
+        const reason = ready > 0
+          ? `${ready} executable ticket${ready === 1 ? '' : 's'} remained after an iteration made no advancing change`
+          : held > 0
+            ? `${held} ticket${held === 1 ? '' : 's'} remain in this seat's hands, but none is executable`
+            : 'no executable work is owned by this seat or ready in its watched scope';
+        // First line stays the cursor for compatibility with older readers;
+        // the second makes an idle seat's wait legible without writing motion
+        // back into Helmo and waking the same seat again (H-954).
+        sSet(l.name, 'IDLE', `${cursor}\n${reason}\n`);
         sSet(l.name, 'IDLE_AT', String(Date.now()));
-        console.log(`rev: no production this iteration — IDLE at seq ${cursor}.`);
+        console.log(`rev: no production this iteration — IDLE at seq ${cursor}: ${reason}.`);
         break;
       }
       case 'continue':

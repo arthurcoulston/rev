@@ -38,7 +38,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   the terms a scoped seat actually meets (queue empty, or every ticket blocked,
   time-gated, or with the human) and carves out an unasked human question,
   which triage duty still requires; only the '*' prompt carried the
-  instruction until H-740. After
+  instruction until H-740.
+  An IDLE sentinel keeps the wake cursor on its first line and a bounded reason
+  on its second (H-954): either no executable work exists in the seat's scope,
+  held work is non-executable, or a session left executable work untouched.
+  The view and `/health.json` expose that reason; it stays local so observing a
+  wait cannot create Helmo motion and wake the same seat again. After
   each iteration it writes the session's metered spend back to the
   most-touched ticket via helm-cli `record-spend` (H-19) — as the rev
   actor, since Rev is the meter, not the spender — net of anything the agent
