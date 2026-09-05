@@ -543,6 +543,25 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
     expect(out).not.toContain('If the goal is already met, closing out is the right move');
   });
 
+  it('the idle rule covers the assigned list, not only the watched stream (H-987)', () => {
+    // The sentence after steering used to say "if nothing THERE is workable",
+    // about the watched stream's ready list alone. A literal reader ended the
+    // session whenever that list was empty, whatever the assigned list held:
+    // five of five Codex-driven passes on the mason seat, one of them with four
+    // reserved helmo-dev tickets named in its own steering.
+    const e = setup(`[loops.literal-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
+`);
+    helm(e, ['create', '--title', 'Routed in from elsewhere', '--body', 'reserved to this seat', '--workstream', 'rev-elsewhere', '--type', 'ops', '--assignee', 'literal-loop']);
+    const out = rev(e, ['run', 'literal-loop', '--count', '1']);
+    expect(out).toContain('A ticket reserved for you is yours to work whatever its workstream');
+    expect(out).toContain('If nothing in EITHER list is workable');
+    expect(out).not.toContain('If nothing there is workable');
+  });
+
   it('held work in the seat\'s own stream keeps the single-stream wording (H-954)', () => {
     // The near miss: naming streams plurally whenever a seat holds anything
     // would reword every ordinary iteration in the fleet for no gain.
