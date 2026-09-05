@@ -2,7 +2,7 @@
 // the outcome through the ladder, idle or halt. v0 runs one loop in the
 // foreground; the multi-loop supervisor is the next milestone.
 import { stateDir } from './config.js';
-import { WakeCheck, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, openEscalation, recordSpend, scopeLabel, seatHolds, seatId, wakeCheck, workstreamInfo } from './helm.js';
+import { WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, openEscalation, recordSpend, scopeLabel, seatHolds, seatId, seatStreams, wakeCheck, workstreamInfo } from './helm.js';
 import { burnWindow, markBurnFloor } from './burn.js';
 import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageForModel } from './usage.js';
 import { choiceExhausted, selectRun } from './routing.js';
@@ -37,6 +37,33 @@ function tryWakeCheck(g: GlobalConfig, l: LoopConfig, sinceSeq: number): WakeChe
     if (decision.act === 'wedge') raiseWedgeAlarm(l.name, decision.reason);
     return null;
   }
+}
+
+// One stream reads as "the workstream" and keeps the wording every seat has
+// been running. Several must be named, because a goal met in one says nothing
+// about the others — and the close-out cue is the whole reason that matters
+// (H-954). Streams carrying neither goal nor budget still get named in the
+// plural preamble: knowing a held stream is unsteered is itself steering.
+export function steeringText(streams: WorkstreamInfo[]): string {
+  const goals = streams.filter((w) => w.goal);
+  const budgets = streams.filter((w) => w.budget_usd);
+  if (goals.length === 0 && budgets.length === 0) return '';
+  const money = (w: WorkstreamInfo) =>
+    `$${w.spent_usd.toFixed(2)} of $${(w.budget_usd ?? 0).toFixed(2)} spent, $${(w.remaining_usd ?? 0).toFixed(2)} remains`;
+  if (streams.length <= 1) {
+    const w = streams[0]!;
+    return (
+      (w.goal ? `The workstream's goal — what done means for the whole stream: ${w.goal}. If the goal is already met, closing out is the right move; do not manufacture polish. ` : '') +
+      (w.budget_usd ? `Budget: ${money(w)}. The budget is the plan — take the highest-value work first; if it is exhausted, close out honestly with residuals documented rather than starting more. ` : '')
+    );
+  }
+  return (
+    `You hold work in more than one workstream (${streams.map((w) => `'${w.name}'`).join(', ')}), and a goal met in one says nothing about the others. ` +
+    goals.map((w) => `'${w.name}' — what done means for that stream: ${w.goal}. `).join('') +
+    (goals.length ? `If a stream's goal is already met, closing out that stream's work is the right move; do not manufacture polish. Streams named above without a goal here have none set — treat them as unsteered, not as finished. ` : '') +
+    budgets.map((w) => `Budget for '${w.name}': ${money(w)}. `).join('') +
+    (budgets.length ? `A budget is the plan — take the highest-value work first; where one is exhausted, close out that stream honestly with residuals documented rather than starting more. ` : '')
+  );
 }
 
 export interface RunOptions {
@@ -213,13 +240,14 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
 
     // Steering disclosure up front (helmo H-55): a budget known before
     // planning changes what gets worked first; discovered at the end, it is
-    // only a verdict. Store-wide loops have no single stream to steer by.
-    const ws = l.workstream === '*' ? null : workstreamInfo(g, l.workstream);
-    const steering =
-      (ws?.goal ? `The workstream's goal — what done means for the whole stream: ${ws.goal}. If the goal is already met, closing out is the right move; do not manufacture polish. ` : '') +
-      (ws?.budget_usd
-        ? `Budget: $${ws.spent_usd.toFixed(2)} of $${ws.budget_usd.toFixed(2)} spent, $${(ws.remaining_usd ?? 0).toFixed(2)} remains. The budget is the plan — take the highest-value work first; if it is exhausted, close out honestly with residuals documented rather than starting more. `
-        : '');
+    // only a verdict. The streams are the seat's own — the one it watches, plus
+    // every stream a ticket in its hands belongs to (H-954). Store-wide loops
+    // still have no single stream to steer by, and their prompt does not carry
+    // the close-out framing steering is written for, so they fetch nothing.
+    const streams = l.workstream === '*' ? [] : [...new Set([l.workstream, ...seatStreams(g, l)])];
+    const steering = steeringText(
+      streams.map((n) => workstreamInfo(g, n)).filter((w): w is WorkstreamInfo => w !== null),
+    );
     // Load the tools BEFORE the work, not when the need appears (H-448). An
     // agent picks its tool set from a guess about the session ahead, and
     // "I might need to file a ticket" is exactly what you discover halfway

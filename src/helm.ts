@@ -89,6 +89,26 @@ export function workstreamInfo(g: GlobalConfig, name: string): WorkstreamInfo | 
 // "still blocked, nothing to do" scores unproductive and the loop idles at the
 // cursor instead of buying itself another iteration. Ward's cheapest passes
 // were exactly that shape.
+// Which workstreams this seat actually has work in: its claims and the work
+// reserved to it, which is not the same as the stream it watches (H-954).
+// Steering read only the watched stream, so a seat holding work routed in from
+// elsewhere was told a goal that did not describe it — "if the goal is already
+// met, closing out is the right move" and all. Failure returns nothing for the
+// same reason workstreamInfo's does: guidance must never stop the loop.
+export function seatStreams(g: GlobalConfig, l: LoopConfig): string[] {
+  try {
+    const rows = ['in_progress', 'open'].flatMap(
+      (status) =>
+        (run(g, ['list', '--assignee', l.name, '--status', status, '--limit', '100']) as {
+          tickets: { workstream: string }[];
+        }).tickets,
+    );
+    return [...new Set(rows.map((t) => t.workstream))];
+  } catch {
+    return [];
+  }
+}
+
 export function actorActivity(g: GlobalConfig, name: string, sinceSeq: number): number {
   return (run(g, ['actor-activity', '--name', name, '--since-seq', String(sinceSeq), '--advancing']) as { events: number }).events;
 }

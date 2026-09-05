@@ -14,11 +14,21 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   point") lives here, and it opens with the workstream's steering when set
   (helm-cli `workstream`: goal + remaining budget, helmo H-55) — disclosure
   before planning, and a steering fetch failure never stops the loop.
-  `workstream = "*"` makes a loop store-wide (H-92, built for bosun): wake is
-  unscoped but fires on MOTION ONLY (changed_since, never ready_count — the
-  whole store's standing backlog would wake a judge every poll forever), no
-  steering fetch, and the prompt defers to the constitution instead of naming
-  a stream or the ONE-ticket rule. Per-loop `idle_floor_s` holds wakes after
+  Steering covers EVERY stream the seat has work in, not just the one it
+  watches (H-954): `seatStreams` lists the tickets assigned to the seat, and
+  the watched stream plus their streams are what `steeringText` speaks for.
+  One stream keeps the wording every seat has been running; several are named
+  individually, and the close-out cue becomes per-stream — because the old
+  singular "if the goal is already met, closing out is the right move" was
+  said about the WATCHED stream while the session's actual work sat in
+  another. A held stream with no goal is still named, as unsteered rather
+  than finished; dropping it would restore the singular wording and the
+  defect with it. `workstream = "*"` makes a loop store-wide (H-92, built for
+  bosun): wake is unscoped but fires on MOTION ONLY (changed_since, never
+  ready_count — the whole store's standing backlog would wake a judge every
+  poll forever), no steering fetch at all — its prompt carries none of the
+  close-out framing steering is written for — and it defers to the
+  constitution instead of naming a stream or the ONE-ticket rule. Per-loop `idle_floor_s` holds wakes after
   an unproductive pass: motion accumulates but cannot re-wake the loop until
   the floor elapses (H-336: a live desk session woke ward ~$1/2min against an
   empty queue; H-545: bosun's own sweep records were the motion that woke it,

@@ -499,6 +499,68 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
     expect(out).toContain('$0.00 of $50.00 spent');
   });
 
+  it('steering names every stream the seat holds work in, not just the one it watches (H-954)', () => {
+    // The defect this closes: steering was built from the SEAT's workstream and
+    // never the assigned ticket's, so a seat holding work routed in from another
+    // stream was told a goal that did not describe it — including "if the goal
+    // is already met, closing out is the right move", over work in a stream
+    // whose goal nobody had checked.
+    const e = setup(`[loops.multi-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
+`);
+    seedTicket(e, 'Work in the watched stream');
+    helm(e, ['create', '--title', 'Routed in from elsewhere', '--body', 'reserved to this seat', '--workstream', 'rev-elsewhere', '--type', 'ops', '--assignee', 'multi-loop']);
+    for (const [name, goal] of [['rev-test', 'the gala happens'], ['rev-elsewhere', 'the archive is catalogued']]) {
+      helm(e, ['workstream-set', '--name', name!, '--goal', goal!], '{"name":"operator","kind":"human"}');
+    }
+    const out = rev(e, ['run', 'multi-loop', '--count', '1']);
+    expect(out).toContain("'rev-test' — what done means for that stream: the gala happens");
+    expect(out).toContain("'rev-elsewhere' — what done means for that stream: the archive is catalogued");
+    expect(out).toContain('a goal met in one says nothing about the others');
+    // The sentence that made the old behaviour dangerous rather than merely
+    // wrong: one stream's goal must never authorize closing out another's.
+    expect(out).not.toContain('If the goal is already met, closing out is the right move');
+  });
+
+  it('a held stream with no goal is named as unsteered, not left looking finished (H-954)', () => {
+    // The commonest shape, and the one that bit: the watched stream has a goal
+    // and the held stream has none. Dropping the goalless stream would restore
+    // the singular wording and the whole defect with it.
+    const e = setup(`[loops.quiet-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
+`);
+    helm(e, ['create', '--title', 'Held work in a stream nobody steered', '--body', 'reserved to this seat', '--workstream', 'rev-quiet', '--type', 'ops', '--assignee', 'quiet-loop']);
+    helm(e, ['workstream-set', '--name', 'rev-test', '--goal', 'the gala happens'], '{"name":"operator","kind":"human"}');
+    const out = rev(e, ['run', 'quiet-loop', '--count', '1']);
+    expect(out).toContain("'rev-quiet'");
+    expect(out).toContain('treat them as unsteered, not as finished');
+    expect(out).not.toContain('If the goal is already met, closing out is the right move');
+  });
+
+  it('held work in the seat\'s own stream keeps the single-stream wording (H-954)', () => {
+    // The near miss: naming streams plurally whenever a seat holds anything
+    // would reword every ordinary iteration in the fleet for no gain.
+    const e = setup(`[loops.solo-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
+`);
+    helm(e, ['create', '--title', 'Held work, same stream', '--body', 'reserved to this seat', '--workstream', 'rev-test', '--type', 'ops', '--assignee', 'solo-loop']);
+    helm(e, ['workstream-set', '--name', 'rev-test', '--goal', 'the gala happens', '--budget-usd', '50'], '{"name":"operator","kind":"human"}');
+    const out = rev(e, ['run', 'solo-loop', '--count', '1']);
+    expect(out).toContain("what done means for the whole stream: the gala happens");
+    expect(out).toContain('If the goal is already met, closing out is the right move');
+    expect(out).toContain('$0.00 of $50.00 spent');
+    expect(out).not.toContain('more than one workstream');
+  });
+
   it('a scoped loop is told how to signal idle — the ladder scores it on that contract (H-740)', () => {
     const e = setup(`[loops.scoped-loop]
 workstream = "rev-test"
