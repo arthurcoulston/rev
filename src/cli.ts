@@ -11,13 +11,37 @@ import { runFleet } from './supervisor.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
 
+const COMMAND_HELP: Record<string, string> = {
+  run: 'usage: rev run [<loop> [--count N]]',
+  stop: 'usage: rev stop [<loop>]',
+  resume: 'usage: rev resume <loop>',
+  service: 'usage: rev service <install|uninstall|start|status>',
+  pace: "usage: rev pace <loop> <fraction (0,1] | park | clear>",
+  usage: 'usage: rev usage [--poll]',
+  routing: 'usage: rev routing',
+  status: 'usage: rev status',
+  tail: 'usage: rev tail <loop>',
+};
+
+if (cmd === '--help' || cmd === '-h') {
+  console.log('usage: rev <command>  (run rev <command> --help for command syntax)');
+  process.exit(0);
+}
+if (rest[0] === '--help' || rest[0] === '-h') {
+  const usage = cmd ? COMMAND_HELP[cmd] : undefined;
+  if (usage) {
+    console.log(usage);
+    process.exit(0);
+  }
+}
+
 function loopArg(): string {
   const name = rest[0];
   if (!name) {
     console.error(`usage: rev ${cmd} <loop>`);
     process.exit(1);
   }
-  return name;
+  return knownLoop(name);
 }
 
 function flag(name: string): string | undefined {
@@ -26,6 +50,14 @@ function flag(name: string): string | undefined {
 }
 
 const { global: g, loops } = loadRoster();
+
+function knownLoop(name: string): string {
+  if (!loops[name]) {
+    console.error(`Unknown loop '${name}'. Roster has: ${Object.keys(loops).join(', ') || '(none)'}`);
+    process.exit(1);
+  }
+  return name;
+}
 
 function state(name: string): string {
   const pid = pidAlive(name);
@@ -53,11 +85,7 @@ switch (cmd) {
       await runFleet(g, loops);
       break;
     }
-    const l = loops[name];
-    if (!l) {
-      console.error(`Unknown loop '${name}'. Roster has: ${Object.keys(loops).join(', ') || '(none)'}`);
-      process.exit(1);
-    }
+    const l = loops[knownLoop(name)]!;
     const count = flag('count') ? Number(flag('count')) : undefined;
     await runLoop(g, l, { count });
     break;
@@ -95,6 +123,7 @@ switch (cmd) {
       console.log(`Drain requested (SIGTERM to supervisor pid ${sup}) — in-flight iterations finish, then the machine stops. Watch: rev status`);
       break;
     }
+    knownLoop(name);
     sSet(name, 'STOP');
     logEvent(name, 'operator', 'STOP set');
     const sup = pidAlive('supervisor');
