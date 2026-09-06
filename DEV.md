@@ -132,8 +132,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   only the loop process. The cost is deliberate and worth naming: a SIGKILLed
   loop now leaves its session running to completion as an orphan — one
   session's tokens, spent finishing and closing its own work, which is the
-  trade this bug was about. `test/shim.test.ts` signals a real group and
-  asserts the session's side effect still landed.
+  trade this bug was about. After a CLI returns normally, the shim terminates
+  background children still in that session group (H-1013); this cleanup is
+  deliberately unreachable when the loop dies during `spawnSync`, so H-467's
+  orphaned session still finishes. `test/shim.test.ts` proves both sides with
+  real process groups.
 
 - `ladder.ts` — pure decision functions for the failure ladder (transient ≠
   failure ≠ apparatus). Unit-tested; change with tests.

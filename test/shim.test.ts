@@ -119,6 +119,20 @@ describe('codexArgs (H-520)', () => {
 // what this asserts. Drop `detached` from the shim's spawn options and the
 // session dies mid-run, the marker is never written, and the alarm rings.
 describe('session process group (H-467)', () => {
+  it('sweeps background children after a completed iteration (H-1013)', () => {
+    const home = mkdtempSync(join(tmpdir(), 'rev-grp-'));
+    const pidFile = join(home, 'background-pid');
+    const loop = {
+      name: 'grouptest', runtime: 'mock', model: 'm', version: '0', cwd: '/tmp',
+      mock_cmd: `sleep 30 >/dev/null 2>&1 & echo $! > ${pidFile}`,
+    } as LoopConfig;
+
+    const res = runSession({} as GlobalConfig, loop, 'prompt');
+    expect(res.rc, res.outputTail).toBe(0);
+    const pid = Number(execFileSync('cat', [pidFile], { encoding: 'utf8' }).trim());
+    expect(() => process.kill(pid, 0)).toThrow();
+  });
+
   it('a signal to the whole process group does not reach the in-flight session', async () => {
     const home = mkdtempSync(join(tmpdir(), 'rev-grp-'));
     const marker = join(home, 'session-closed');

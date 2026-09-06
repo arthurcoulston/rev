@@ -130,6 +130,37 @@ function logTokens(l: LoopConfig, model: string, tokens?: number, cost?: number,
 // one session's tokens, spent finishing and closing its own work.
 const SESSION_GROUP = { detached: true } as const;
 
+// A completed CLI may leave background children in its detached group. Sweep
+// that group only after the leader has returned; if the loop itself dies while
+// spawnSync is blocked, this code never runs and H-467's close-out protection
+// remains intact. TERM gets a short grace, then KILL bounds cleanup.
+function cleanupSessionGroup(pid: number | undefined): void {
+  if (!pid || process.platform === 'win32') return;
+  const alive = (): boolean => {
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!alive()) return;
+  try {
+    process.kill(-pid, 'SIGTERM');
+  } catch {
+    return;
+  }
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (let waited = 0; waited < 1000 && alive(); waited += 25) Atomics.wait(pause, 0, 0, 25);
+  if (alive()) {
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {
+      /* group exited between the liveness check and the signal */
+    }
+  }
+}
+
 // The system prompt a session carries: the constitution, then each roster
 // skill whole (H-247) — a loop that touches Drive carries file-stewardship
 // the way a desk session loads it. One file because the CLI takes one path.
@@ -160,6 +191,7 @@ function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string
       ],
       { cwd: l.cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, env: sessionEnv(l), stdio: ['ignore', 'pipe', 'pipe'], ...SESSION_GROUP },
     );
+    cleanupSessionGroup(res.pid);
     if (res.error) return { rc: 78, cls: 'apparatus', outputTail: `claude CLI not runnable: ${res.error.message}` };
     const stdout = res.stdout ?? '';
     let tokens: number | undefined, cost: number | undefined, tail = stdout;
@@ -298,6 +330,7 @@ function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string,
       ...SESSION_GROUP,
     },
   );
+  cleanupSessionGroup(res.pid);
   if (res.error) return { rc: 78, cls: 'apparatus', outputTail: `codex CLI not runnable: ${res.error.message}` };
   const run = parseCodexEvents(res.stdout ?? '');
   const tokens = run.usage ? run.usage.input + run.usage.output : undefined;
@@ -332,6 +365,7 @@ function runMock(l: LoopConfig, prompt: string, model: string): SessionResult {
     env: { ...sessionEnv(l), REV_LOOP: l.name, REV_PROMPT: prompt, REV_MODEL: model, HELMO_ACTOR: JSON.stringify(loopActor(l, model)) },
     ...SESSION_GROUP,
   });
+  cleanupSessionGroup(res.pid);
   const rc = res.status ?? 1;
   const cls = rc === 0 ? 'ok' : rc === 75 ? 'transient' : rc === 78 ? 'apparatus' : 'failure';
   // Mock sessions can report usage the way real runtimes do, so the metering
