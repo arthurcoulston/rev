@@ -453,7 +453,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         const reason = ready > 0
           ? `${ready} executable ticket${ready === 1 ? '' : 's'} remained after an iteration made no advancing change`
           : held > 0
-            ? `${held} ticket${held === 1 ? '' : 's'} remain in this seat's hands, but none is executable`
+            ? `${held} ticket${held === 1 ? ' remains' : 's remain'} in this seat's hands, but none is executable`
             : 'no executable work is owned by this seat or ready in its watched scope';
         // First line stays the cursor for compatibility with older readers;
         // the second makes an idle seat's wait legible without writing motion

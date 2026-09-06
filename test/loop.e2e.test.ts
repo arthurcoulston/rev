@@ -192,6 +192,24 @@ fi
     expect(events.slice(events.indexOf('action=idle'))).not.toMatch(/wake\s/);
   });
 
+  it('names held-but-non-executable work without changing the compatible cursor line (H-954)', () => {
+    const e = setup(`[loops.held-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+`);
+    helm(e, [
+      'create', '--title', 'Mid-flight work', '--body', 'owned by this seat but not ready to draw',
+      '--workstream', 'elsewhere', '--type', 'ops', '--assignee', 'held-loop', '--status', 'in_progress',
+    ], '{"name":"held-loop","kind":"agent","model":"mock","version":"0.1","session":"rev:held-loop"}');
+
+    rev(e, ['run', 'held-loop', '--count', '1']);
+    const idle = readFileSync(join(e.home, 'state', 'held-loop', 'IDLE'), 'utf8').split('\n');
+    expect(Number.isInteger(Number(idle[0]))).toBe(true);
+    expect(idle[1]).toBe("1 ticket remains in this seat's hands, but none is executable");
+  });
+
   it('a restarted loop picks up standing ready work once, then goes motion-only (H-426)', () => {
     const e = setup(`[loops.note-loop]
 workstream = "rev-test"
