@@ -210,11 +210,12 @@ mock_cmd = "true"
     expect(idle[1]).toBe("1 ticket remains in this seat's hands, but none is executable");
   });
 
-  it('a restarted loop picks up standing ready work once, then goes motion-only (H-426)', () => {
+  it('a restarted loop ignores the old idle floor once, then goes motion-only (H-426/H-995)', async () => {
     const e = setup(`[loops.note-loop]
 workstream = "rev-test"
 cwd = "/tmp"
 runtime = "mock"
+idle_floor_s = 3600
 mock_cmd = '''
 set -e
 ID=$(node ${HELM_CLI} list --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
@@ -229,11 +230,24 @@ fi
     // First process: runs once, declines, idles. IDLE survives its exit.
     rev(e, ['run', 'note-loop', '--count', '1']);
     expect(existsSync(join(dir, 'IDLE'))).toBe(true);
+    expect(existsSync(join(dir, 'IDLE_AT'))).toBe(true);
 
-    // Second process starts idle with the ticket still ready and no motion:
-    // the first poll wakes it (restart pickup), the second does not.
+    // Second process starts idle with the ticket still ready, no motion, and a
+    // fresh one-hour floor. Restart pickup bypasses that old process's floor.
     const marker = readFileSync(join(dir, 'events.log'), 'utf8').length;
-    rev(e, ['run', 'note-loop', '--count', '1']);
+    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'note-loop', '--count', '1'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
+    });
+    try {
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline) {
+        const tail = readFileSync(join(dir, 'events.log'), 'utf8').slice(marker);
+        if (/run-end.*iter=1/.test(tail)) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    } finally {
+      child.kill('SIGKILL');
+    }
     const events = readFileSync(join(dir, 'events.log'), 'utf8').slice(marker);
     expect(events).toMatch(/wake\s/);
     expect(events).toMatch(/run-end.*iter=1/);

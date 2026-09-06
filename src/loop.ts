@@ -149,9 +149,10 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       // exception is the first successful poll after process start — standing
       // ready work counts once there, so a loop that went down with work queued
       // picks it up on restart instead of waiting for something else to move.
+      const restartPoll = firstPoll;
       const wake = wakeDecide({
         changedSince: w.changed_since,
-        firstPoll,
+        firstPoll: restartPoll,
         workstream: l.workstream,
         readyCount: w.ready_count,
       });
@@ -159,9 +160,10 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       // Idle floor (H-336/H-545): an unproductive pass costs the same whatever
       // it finds, and both burn incidents were wakes minutes apart from a live
       // desk session or the loop's own exhaust. Motion accumulates while held —
-      // nothing is lost; the wake fires once the floor has elapsed.
+      // nothing is lost; the wake fires once the floor has elapsed. A fresh
+      // process bypasses the old process's floor on its restart-pickup poll.
       const idleAt = parseInt(sGet(l.name, 'IDLE_AT') ?? '', 10) || 0;
-      if (wake && (l.idle_floor_s <= 0 || Date.now() - idleAt >= l.idle_floor_s * 1000)) {
+      if (wake && (restartPoll || l.idle_floor_s <= 0 || Date.now() - idleAt >= l.idle_floor_s * 1000)) {
         sClear(l.name, 'IDLE');
         sClear(l.name, 'IDLE_AT');
         logEvent(l.name, 'wake', `since=${since} ready=${w.ready_count}`);

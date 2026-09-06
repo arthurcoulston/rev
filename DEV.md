@@ -32,7 +32,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   an unproductive pass: motion accumulates but cannot re-wake the loop until
   the floor elapses (H-336: a live desk session woke ward ~$1/2min against an
   empty queue; H-545: bosun's own sweep records were the motion that woke it,
-  16 straight iterations to the burn breaker). BOTH prompts tell a no-change
+  16 straight iterations to the burn breaker). The first successful poll after
+  a process start bypasses a surviving `IDLE_AT`: the floor spaces passes from
+  the same process, but must not make a restarted seat sleep on queued work
+  (H-995). BOTH prompts tell a no-change
   pass to end WITHOUT filing or noting — its own exhaust is fresh motion, so a
   no-change record re-wakes the loop it closes. The scoped prompt says it in
   the terms a scoped seat actually meets (queue empty, or every ticket blocked,
