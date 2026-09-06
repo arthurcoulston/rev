@@ -150,7 +150,7 @@ mock_cmd = "true"
     }
   });
 
-  it('a note-only session is not production — the loop idles instead of running on (H-412)', () => {
+  it('a note-only session is not production — the loop idles instead of running on (H-412)', async () => {
     // The exact shape that cost the most: an agent finds nothing actionable,
     // records that honestly, and ends. Before the advancing check that note
     // scored as production and bought another full iteration.
@@ -171,16 +171,23 @@ fi
     const dir = join(e.home, 'state', 'note-loop');
     // Two iterations requested, but only one can happen: the first idles, and
     // the standing ticket the mock keeps declining is not motion (H-426), so
-    // the loop polls quietly until the timeout kills it.
+    // the loop polls quietly until the test observes the idle state and stops it.
+    const eventsPath = join(dir, 'events.log');
+    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'note-loop', '--count', '2'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
+    });
     try {
-      execFileSync('npx', ['tsx', REV_CLI, 'run', 'note-loop', '--count', '2'], {
-        env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..'), timeout: 4000,
-      });
-      expect.unreachable('a declined ready ticket must not re-wake the idled loop');
-    } catch {
-      /* killed while idling: expected */
+      await waitForFile(eventsPath, 30_000);
+      const deadline = Date.now() + 30_000;
+      while (!(/run-end.*iter=1.*produced=false.*action=idle/.test(readFileSync(eventsPath, 'utf8'))
+        && existsSync(join(dir, 'IDLE')))) {
+        if (Date.now() >= deadline) throw new Error('timed out waiting for note-loop to idle');
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    } finally {
+      child.kill('SIGKILL');
     }
-    const events = readFileSync(join(dir, 'events.log'), 'utf8');
+    const events = readFileSync(eventsPath, 'utf8');
     expect(events).toMatch(/run-end.*iter=1.*produced=false.*action=idle/);
     expect(existsSync(join(dir, 'IDLE'))).toBe(true);
     expect(readFileSync(join(dir, 'IDLE'), 'utf8')).toContain('1 executable ticket remained after an iteration made no advancing change');
