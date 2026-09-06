@@ -153,13 +153,13 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 - `service.ts` — reboot resilience: launchd plist (KeepAlive on crash only —
   a drain exits 0 and stays down) / systemd user unit. Units embed
   install-time PATH and REV_HOME because service managers strip env. Both must
-  outwait rev's own drain, and both defaults were far too short: launchd's
-  `ExitTimeOut` is 20s and systemd's `TimeoutStopSec` 90s against iterations
-  that legitimately run ten minutes, after which the manager SIGKILLs and
-  sweeps the job's process group. Both are pinned to
-  `DEFAULT_DRAIN_GRACE_SECONDS + 60` (one exported number, no drift), and
-  systemd gets `KillMode=mixed` so a stop signals the supervisor, not every
-  process in the cgroup (H-467).
+  systemd gets `KillMode=mixed` and a timeout longer than rev's drain, so a stop
+  signals the supervisor rather than every process in the cgroup (H-467).
+  launchd is different: it clamps `ExitTimeOut` at 60s even when the plist asks
+  for 660s (measured on Darwin 25.6, H-877). Its bootout/reinstall path is
+  therefore a hard stop after the largest available 60s window; the detached
+  session process group is what lets an agent finish and close its work. Use
+  `rev stop` when the whole machine must drain gracefully before service work.
 - `sentinels.ts` / `config.ts` — sentinel files + roster loading. A loop's
   optional `skills = [...]` (paths) are appended whole to its constitution at
   spawn — how a Drive-touching loop carries crew `skills/file-stewardship.md`

@@ -10,11 +10,9 @@ export function revHome(): string {
   return process.env['REV_HOME'] ?? join(homedir(), '.rev');
 }
 
-// How long a drain may take before stragglers are SIGKILLed. Exported because
-// the service units have to outwait it (H-467): a launchd ExitTimeOut or a
-// systemd TimeoutStopSec shorter than this kills the supervisor mid-drain, and
-// the service manager's own group kill then lands on whatever is still in
-// flight. One number, two consumers, no drift.
+// How long a graceful drain may take before stragglers are SIGKILLed. systemd
+// can outwait it; launchd clamps ExitTimeOut at 60 seconds, so its bootout is a
+// hard path and detached sessions are the safety boundary (H-877).
 export const DEFAULT_DRAIN_GRACE_SECONDS = 600;
 
 const GLOBAL_DEFAULTS = {

@@ -16,9 +16,9 @@ describe('service unit generation', () => {
     expect(p).toContain('<string>run</string>');
     expect(p).toContain('<key>REV_HOME</key><string>/Users/x/.rev</string>');
     expect(p).toContain('launchd.log');
-    // H-467: outwait rev's own drain. The default 20s ExitTimeOut SIGKILLs the
-    // supervisor mid-drain, and launchd then sweeps its process group.
-    expect(p).toContain('<key>ExitTimeOut</key><integer>660</integer>');
+    // H-877: launchd clamps larger values to 60 seconds. Bootout is the hard
+    // path; detached sessions survive if their loop drivers are swept.
+    expect(p).toContain('<key>ExitTimeOut</key><integer>60</integer>');
   });
   it('launchd: XML-escapes paths', () => {
     const p = launchdPlist('/node', '/a&b/cli.js', { home: '/h', path: '/p', logPath: '/l' });

@@ -13,6 +13,7 @@ import { DEFAULT_DRAIN_GRACE_SECONDS, revHome, stateDir } from './config.js';
 import { pidAlive } from './sentinels.js';
 
 export const LABEL = 'dev.rev';
+export const LAUNCHD_EXIT_TIMEOUT_SECONDS = 60;
 
 const xml = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string));
 
@@ -37,12 +38,11 @@ export function launchdPlist(node: string, cli: string, opts: { home: string; pa
   </dict>
   <key>StandardOutPath</key><string>${xml(opts.logPath)}</string>
   <key>StandardErrorPath</key><string>${xml(opts.logPath)}</string>
-  <!-- Outwait rev's own drain (H-467). launchd's default ExitTimeOut is 20
-       seconds; iterations legitimately run ten minutes. At the timeout launchd
-       SIGKILLs the job and then sweeps the rest of its process group, which is
-       how a routine \`launchctl kickstart -k\` used to sever a live agent
-       session between its file writes and its Helmo close. -->
-  <key>ExitTimeOut</key><integer>${DEFAULT_DRAIN_GRACE_SECONDS + 60}</integer>
+  <!-- launchd clamps ExitTimeOut at 60 seconds (H-877). This buys the largest
+       available window for loop drivers to finish; detached agent sessions
+       remain the protection when a bootout becomes a hard stop. Use rev stop
+       for a graceful drain that may outlast this service-manager ceiling. -->
+  <key>ExitTimeOut</key><integer>${LAUNCHD_EXIT_TIMEOUT_SECONDS}</integer>
 </dict>
 </plist>
 `;
@@ -105,7 +105,7 @@ export function serviceInstall(): void {
     const logPath = join(stateDir('supervisor'), 'launchd.log');
     const domain = `gui/${process.getuid!()}`;
     installLaunchd(file, launchdPlist(node, cli, { home, path, logPath }), domain);
-    console.log(`Installed and started: ${file}\nAny running supervisor was stopped and restarted; its in-flight iterations ended during installation.\nThe supervisor now survives reboots. Logs: ${logPath}`);
+    console.log(`Installed and started: ${file}\nAny running supervisor was stopped and restarted; launchd allows its loop drivers 60 seconds to exit, while detached agent sessions continue to completion.\nThe supervisor now survives reboots. Logs: ${logPath}`);
   } else {
     writeFileSync(file, systemdUnit(node, cli, { home, path }));
     systemctl('daemon-reload');
