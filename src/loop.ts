@@ -292,7 +292,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     // Production means work advanced, not bytes written (H-412): a note-only
     // update does not count, so an agent that reports "nothing to do" idles
     // instead of re-certifying itself busy.
-    const produced = res.cls === 'ok' ? actorActivity(g, l.name, before.max_seq) > 0 : false;
+    const produced = res.cls === 'ok' ? actorActivity(g, l, before.max_seq) > 0 : false;
     const failStreak = res.cls === 'failure' ? streak(l.name, 'fail', true) : 0;
     const limitStreak = res.cls === 'transient' ? streak(l.name, 'limit', true) : 0;
     let action = ladderDecide(res.cls, {
@@ -311,7 +311,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     // (record-spend accepts terminal tickets) and must never affect the run.
     if (res.tokens || res.cost_usd) {
       try {
-        const touched = actorTickets(g, l.name, before.max_seq);
+        const touched = actorTickets(g, l, before.max_seq);
         if (touched.length) {
           const [primary, ...rest] = touched;
           // Net out anything the agent self-reported this session: the meter
@@ -319,7 +319,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           // once (H-57). Each guess is cancelled on the ticket that carries it
           // — a session-wide correction on the primary once left it at −62k
           // while a side ticket kept the +80k guess (H-187).
-          const self = actorSelfSpend(g, l.name, before.max_seq);
+          const self = actorSelfSpend(g, l, before.max_seq);
           const guess = new Map(self.by_ticket.map((t) => [t.id, t]));
           const primaryGuess = guess.get(primary!.id);
           const tokens = (res.tokens ?? 0) - (primaryGuess?.tokens ?? 0);

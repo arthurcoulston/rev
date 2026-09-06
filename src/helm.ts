@@ -109,12 +109,12 @@ export function seatStreams(g: GlobalConfig, l: LoopConfig): string[] {
   }
 }
 
-export function actorActivity(g: GlobalConfig, name: string, sinceSeq: number): number {
-  return (run(g, ['actor-activity', '--name', name, '--since-seq', String(sinceSeq), '--advancing']) as { events: number }).events;
+export function actorActivity(g: GlobalConfig, l: LoopConfig, sinceSeq: number): number {
+  return (run(g, ['actor-activity', '--name', l.name, '--session', seatId(l), '--since-seq', String(sinceSeq), '--advancing']) as { events: number }).events;
 }
 
-export function actorTickets(g: GlobalConfig, name: string, sinceSeq: number): { id: string; events: number }[] {
-  return (run(g, ['actor-tickets', '--name', name, '--since-seq', String(sinceSeq)]) as { tickets: { id: string; events: number }[] }).tickets;
+export function actorTickets(g: GlobalConfig, l: LoopConfig, sinceSeq: number): { id: string; events: number }[] {
+  return (run(g, ['actor-tickets', '--name', l.name, '--session', seatId(l), '--since-seq', String(sinceSeq)]) as { tickets: { id: string; events: number }[] }).tickets;
 }
 
 export interface SelfSpend {
@@ -124,8 +124,8 @@ export interface SelfSpend {
   by_ticket: { id: string; tokens: number; cost_usd: number }[];
 }
 
-export function actorSelfSpend(g: GlobalConfig, name: string, sinceSeq: number): SelfSpend {
-  const r = run(g, ['actor-spend', '--name', name, '--since-seq', String(sinceSeq)]) as SelfSpend;
+export function actorSelfSpend(g: GlobalConfig, l: LoopConfig, sinceSeq: number): SelfSpend {
+  const r = run(g, ['actor-spend', '--name', l.name, '--session', seatId(l), '--since-seq', String(sinceSeq)]) as SelfSpend;
   return { ...r, by_ticket: r.by_ticket ?? [] };
 }
 

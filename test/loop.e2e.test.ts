@@ -87,12 +87,19 @@ set -e
 ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
 if [ -n "$ID" ]; then
   node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
+  SIDE=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+  if [ -n "$SIDE" ]; then
+    HELMO_ACTOR='{"name":"test-loop","kind":"agent","model":"mock","version":"0.1","session":"desk"}' node ${HELM_CLI} update --ticket $SIDE --note "desk claim" --status in_progress
+    HELMO_ACTOR='{"name":"test-loop","kind":"agent","model":"mock","version":"0.1","session":"desk"}' node ${HELM_CLI} update --ticket $SIDE --note "desk progress"
+    HELMO_ACTOR='{"name":"test-loop","kind":"agent","model":"mock","version":"0.1","session":"desk"}' node ${HELM_CLI} update --ticket $SIDE --note "desk done" --status done --evidence-kind other --evidence-ref desk
+  fi
   node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
   echo "rev-mock-usage tokens=1200 cost_usd=0.25"
 fi
 '''
 `);
     const id = seedTicket(e, 'Mock work item');
+    const side = seedTicket(e, 'Desk work under the same actor name');
     const out = rev(e, ['run', 'test-loop', '--count', '2']);
     expect(out).toContain('run 1 started');
 
@@ -104,6 +111,7 @@ fi
     // written by the rev actor AFTER the mock closed it.
     expect(ticket.tokens_total).toBe(1200);
     expect(ticket.cost_usd_total).toBeCloseTo(0.25);
+    expect((helm(e, ['get', side]) as { tokens_total: number }).tokens_total).toBe(0);
     expect(readFileSync(join(e.home, 'token-log'), 'utf8')).toContain('tokens=1200 cost_usd=0.25');
 
     // Second iteration produced nothing -> loop idles at the cursor.

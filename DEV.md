@@ -48,7 +48,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   The view and `/health.json` expose that reason; it stays local so observing a
   wait cannot create Helmo motion and wake the same seat again. After
   each iteration it writes the session's metered spend back to the
-  most-touched ticket via helm-cli `record-spend` (H-19) — as the rev
+  most-touched ticket via session-filtered helm-cli event queries and
+  `record-spend` (H-19, H-878), so desk writes under the same actor name cannot
+  capture the loop's charge — as the rev
   actor, since Rev is the meter, not the spender — net of anything the agent
   self-reported in the window (`actor-spend`, H-57): a session lands in the
   totals exactly once. Each guess is cancelled on the ticket that carries it
