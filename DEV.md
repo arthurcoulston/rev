@@ -354,7 +354,9 @@ dependency this repo should grow for one link.
   changes.
 - Reboot resilience is opt-in: `rev service install` (launchd/systemd user
   service). Installing changes what runs at login — operator's call, never an
-  agent's.
+  agent's. On launchd, reinstall writes the new plist, boots out any loaded
+  supervisor, then bootstraps it again; the command names that running work is
+  interrupted rather than leaving the old job silently loaded (H-874).
 - The supervisor never overrides a halt sentinel: STOP/HOLD/BLOCKED keep a
   loop down until an operator (or Helm answer) clears them; clearance is
   picked up within one poll.

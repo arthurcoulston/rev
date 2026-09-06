@@ -84,6 +84,16 @@ function systemctl(...args: string[]): void {
   execFileSync('systemctl', ['--user', ...args], { stdio: 'inherit' });
 }
 
+export function installLaunchd(file: string, plist: string, domain: string, run = launchctl): void {
+  writeFileSync(file, plist);
+  try {
+    run('bootout', `${domain}/${LABEL}`);
+  } catch {
+    /* not loaded is fine */
+  }
+  run('bootstrap', domain, file);
+}
+
 export function serviceInstall(): void {
   const { kind, file } = serviceFile();
   const node = process.execPath;
@@ -93,9 +103,9 @@ export function serviceInstall(): void {
   mkdirSync(join(file, '..'), { recursive: true });
   if (kind === 'launchd') {
     const logPath = join(stateDir('supervisor'), 'launchd.log');
-    writeFileSync(file, launchdPlist(node, cli, { home, path, logPath }));
-    launchctl('bootstrap', `gui/${process.getuid!()}`, file);
-    console.log(`Installed and started: ${file}\nThe supervisor now survives reboots. Logs: ${logPath}`);
+    const domain = `gui/${process.getuid!()}`;
+    installLaunchd(file, launchdPlist(node, cli, { home, path, logPath }), domain);
+    console.log(`Installed and started: ${file}\nAny running supervisor was stopped and restarted; its in-flight iterations ended during installation.\nThe supervisor now survives reboots. Logs: ${logPath}`);
   } else {
     writeFileSync(file, systemdUnit(node, cli, { home, path }));
     systemctl('daemon-reload');
