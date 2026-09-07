@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // rev — run and control loops. Control verbs are sentinel writes; anything
 // that reads state is safe from any context (the watch officer uses these).
+import { existsSync } from 'node:fs';
 import { loadRoster, stateDir } from './config.js';
 import { pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageLine, usagePath } from './usage.js';
 import { selectRun } from './routing.js';
 import { runLoop } from './loop.js';
-import { serviceInstall, serviceStart, serviceStatusLine, serviceUninstall } from './service.js';
+import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall } from './service.js';
+import { readRedeploy, requestRedeploy, watchRedeploy } from './redeploy.js';
 import { logEvent, pidAlive, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
 import { runFleet } from './supervisor.js';
 
@@ -16,6 +18,7 @@ const COMMAND_HELP: Record<string, string> = {
   stop: 'usage: rev stop [<loop>]',
   resume: 'usage: rev resume <loop>',
   service: 'usage: rev service <install|uninstall|start|status>',
+  redeploy: 'usage: rev redeploy [--ticket <id>] [--reason "<why>"]',
   pace: "usage: rev pace <loop> <fraction (0,1] | park | clear>",
   usage: 'usage: rev usage [--poll]',
   routing: 'usage: rev routing',
@@ -82,12 +85,52 @@ switch (cmd) {
     if (!name) {
       // The general start (the operator starts the machine, not a named
       // worker): supervise every roster loop.
-      await runFleet(g, loops);
+      const code = await runFleet(g, loops);
+      if (code) process.exit(code);
       break;
     }
     const l = loops[knownLoop(name)]!;
     const count = flag('count') ? Number(flag('count')) : undefined;
     await runLoop(g, l, { count });
+    break;
+  }
+  // Activating a fix the crew has already committed and tested is the crew's
+  // call, not the operator's (Arthur, H-1046). The ask is deferred on purpose:
+  // the supervisor drains at its next poll, so the session that shipped the fix
+  // finishes its close-out instead of being restarted out from under itself.
+  case 'redeploy': {
+    const sup = pidAlive('supervisor');
+    if (!sup) {
+      console.error('No supervisor running — nothing to redeploy. The next `rev run` starts on the current build anyway.');
+      process.exit(1);
+    }
+    const pending = readRedeploy();
+    if (pending) {
+      console.log(`A redeploy is already pending (asked by ${pending.by} at ${pending.requested_at}) — the supervisor drains within ${g.poll_seconds}s. Yours would be the same restart.`);
+      break;
+    }
+    requestRedeploy({
+      by: flag('by') ?? process.env['REV_LOOP'] ?? 'operator',
+      reason: flag('reason') ?? 'activate committed changes',
+      ticket: flag('ticket'),
+      requested_at: new Date().toISOString(),
+    });
+    console.log(
+      `Redeploy requested. The supervisor (pid ${sup}) drains within ${g.poll_seconds}s — in-flight iterations finish their close-out — then exits for the service manager to start the new code.`,
+    );
+    if (!existsSync(serviceFile().file)) {
+      console.log(
+        `WARNING: no service is installed (${serviceFile().file}), so nothing will start the supervisor again: the fleet will drain and STAY DOWN until someone runs \`rev run\`. Rev will file that as an outage if it happens.`,
+      );
+    }
+    break;
+  }
+  // Armed by a redeploying supervisor just before it exits, so that something
+  // outlives the fleet to say if it never comes back (H-1046).
+  case 'redeploy-watch': {
+    const deadline = flag('deadline') ? Number(flag('deadline')) : g.redeploy_deadline_seconds;
+    const ok = await watchRedeploy(g, deadline);
+    if (!ok) process.exit(1);
     break;
   }
   case 'status': {
@@ -218,6 +261,8 @@ switch (cmd) {
   routing                  preview working-model choices from current usage (no runs)
   status                   supervisor + every loop's state at a glance
   service <verb>           install|uninstall|start|status — survive reboots (launchd/systemd)
+  redeploy [--ticket <id>] [--reason "<why>"]
+                           activate a committed fix: drain after in-flight iterations, come back on the new code
   tail <loop>              print the path of the loop's event trace
 Roster: ${Object.keys(loops).join(', ') || '(none)'} — from ~/.rev/roster.toml (REV_HOME to override).`);
     process.exit(cmd ? 1 : 0);

@@ -20,6 +20,7 @@ export interface GlobalConfig {
   wedge_cap: number;                    // consecutive wake-check failures before a loop is declared wedged; 0 disables (H-448)
   seat_stale_seconds: number;           // a foreign in_progress hold older than this no longer stands the loop down (H-558); 0 disables the guard
   drain_grace_seconds: number;          // supervisor: seconds a drain waits before SIGKILLing stragglers; 0 waits forever (H-281)
+  redeploy_deadline_seconds: number;    // seconds a redeploy's watch waits for the new supervisor before alarming; 0 disables the watch (H-1046)
   probe?: RunChoice;                    // global probe pin ("provider:tier"): every probe pass runs here while its cap stands (H-625)
 }
 
@@ -90,5 +91,5 @@ export interface SessionResult {
   outputTail: string; // last lines of session output, for traces and escalations
 }
 
-export const SENTINELS = ['STOP', 'HOLD', 'BLOCKED', 'LIMIT', 'IDLE', 'IDLE_AT', 'RUNNING', 'PACE', 'PARKED', 'BACKOFF', 'WEDGED'] as const;
+export const SENTINELS = ['STOP', 'HOLD', 'BLOCKED', 'LIMIT', 'IDLE', 'IDLE_AT', 'RUNNING', 'PACE', 'PARKED', 'BACKOFF', 'WEDGED', 'REDEPLOY'] as const;
 export type Sentinel = (typeof SENTINELS)[number];

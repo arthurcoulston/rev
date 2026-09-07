@@ -53,6 +53,10 @@ const GLOBAL_DEFAULTS = {
   // ends with an operator kill -9 and an orphan. Past the grace, SIGKILL.
   // Generous because in-flight iterations legitimately run minutes.
   drain_grace_seconds: DEFAULT_DRAIN_GRACE_SECONDS,
+  // Redeploy watch (H-1046). Five minutes covers launchd's respawn throttle
+  // and a slow start many times over, so a deadline reached means the fleet is
+  // genuinely down rather than slow.
+  redeploy_deadline_seconds: 300,
 };
 
 export interface Roster {

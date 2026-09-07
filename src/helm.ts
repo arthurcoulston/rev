@@ -190,6 +190,46 @@ function escalationTitle(l: LoopConfig): string {
   return `Loop '${l.name}' is blocked: needs a decision`;
 }
 
+/** The landing note for a redeploy the crew decided on its own (H-1046). The
+ *  evidence is the supervisor's events.log, because that file is where the
+ *  drain and the fleet-start that answered it both live. */
+export function redeployLanded(
+  g: GlobalConfig, ticketId: string, r: { by: string; reason: string }, pid: number, eventsPath: string,
+): void {
+  run(g, [
+    'update', '--ticket', ticketId,
+    '--note',
+    `Rev redeployed the fleet to activate this work: the supervisor drained, the service manager started it again on the new code, and it is running as pid ${pid}. Asked for by ${r.by} — ${r.reason}.`,
+    '--evidence-kind', 'file', '--evidence-ref', eventsPath,
+  ], revActor());
+}
+
+/** A redeploy that never came back is a total outage, and the loops that would
+ *  have noticed are exactly what is missing. Always a FRESH ticket: the
+ *  requesting one may be closed, and returning a live one would release a claim
+ *  its holder still has work in. */
+export function redeployFailed(g: GlobalConfig, r: { by: string; reason: string; ticket?: string }, detail: string): void {
+  const created = run(g, [
+    'create',
+    '--title', 'The fleet drained to redeploy and no supervisor came back',
+    '--body',
+    `Rev drained the fleet to activate a fix, and no supervisor returned: ${detail}.\n\n` +
+      `Asked for by ${r.by}${r.ticket ? ` while working ${r.ticket}` : ''} — ${r.reason}.\n\n` +
+      `Nothing is drawing work until a supervisor is running. Check: rev status, then the supervisor's events.log ` +
+      `and the service log; start the machine with 'rev service start' (or 'rev run').`,
+    '--workstream', g.escalation_workstream,
+    '--type', 'ops',
+    '--priority', '0',
+  ], revActor()) as { id: string };
+  run(g, [
+    'return', '--ticket', created.id,
+    '--situation', `The fleet drained to redeploy${r.ticket ? ` for ${r.ticket}` : ''} and no supervisor came back: ${detail}. Every loop is down.`,
+    '--question', 'Start the machine by hand, or is the new build broken?',
+    '--recommendation', "start it — 'rev service start' brings the supervisor back; if it exits again, the build that was deployed is the suspect",
+    '--if-unanswered', 'No loop draws any work until a supervisor is running.',
+  ], revActor());
+}
+
 // A BLOCKED loop is a summons, not a log line: file it straight into the
 // awaiting-human queue so the operator's existing dashboard and meeting see it.
 export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, outputTail: string, stateDir: string): string {

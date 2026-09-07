@@ -19,6 +19,9 @@ import { Sentinel } from './types.js';
 //   BACKOFF  supervisor: loop crashed; respawn pending (contents = attempt + retry time)
 //   WEDGED   rev: cannot reach Helm at all; alarm raised. NOT a halt — the loop
 //            keeps polling, because the fault is outside it and may clear.
+//   REDEPLOY agent/operator (supervisor's dir): drain and come back on the new
+//            code. Present at startup it is the record of the restart that just
+//            happened, never a fresh ask — see redeploy.ts.
 
 export function sPath(loop: string, s: Sentinel | string): string {
   return join(stateDir(loop), s);

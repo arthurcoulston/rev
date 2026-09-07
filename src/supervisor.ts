@@ -19,6 +19,7 @@ import { respawnDecide } from './ladder.js';
 import { pollUsage } from './usage.js';
 import { rotateOpenFd } from './logretention.js';
 import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
+import { REDEPLOY_EXIT, RedeployRequest, armRedeployWatch, readRedeploy, reportRedeployLanded } from './redeploy.js';
 import { answeredResumeEscalation, completeAnsweredResume, failAnsweredResume } from './helm.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 
@@ -38,7 +39,9 @@ function halted(name: string): boolean {
   return sHas(name, 'STOP') || sHas(name, 'HOLD') || sHas(name, 'BLOCKED');
 }
 
-export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Promise<void> {
+/** Resolves with the process exit code: 0 for a drain that should stay down,
+ *  REDEPLOY_EXIT for one the service manager must bring back (H-1046). */
+export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Promise<number> {
   const existing = pidAlive(SUP);
   if (existing) {
     throw new Error(`A supervisor is already running (PID ${existing}). Check: rev status`);
@@ -52,21 +55,36 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
   }
   sSet(SUP, 'RUNNING', runningStamp());
   process.on('exit', () => sClear(SUP, 'RUNNING'));
+  // A REDEPLOY found at startup is the record of the restart that just
+  // happened, not an ask. Clearing it here, before any poll can read it, is
+  // what keeps a redeploy from looping forever (H-1046).
+  const landed = readRedeploy();
+  if (landed) sClear(SUP, 'REDEPLOY');
 
   const slots = new Map<string, Slot>();
   let shuttingDown = false;
   let drainAt = 0;
+  let redeploying: RedeployRequest | null = null;
   const lineage = ancestryStamp();
 
-  return new Promise<void>((resolve) => {
+  return new Promise<number>((resolve) => {
     const finishIfDrained = () => {
       if (!shuttingDown) return;
       for (const s of slots.values()) if (s.child) return;
       clearInterval(timer);
       if (usageTimer) clearInterval(usageTimer);
+      if (redeploying) {
+        // Exit unsuccessfully on purpose: that is the exit launchd and systemd
+        // restart, and the supervisor that returns is the new code.
+        armRedeployWatch(g);
+        logEvent(SUP, 'fleet-stop', `drained for redeploy (exit ${REDEPLOY_EXIT})`);
+        console.log('rev: fleet drained to redeploy — exiting for the service manager to start the new code.');
+        resolve(REDEPLOY_EXIT);
+        return;
+      }
       logEvent(SUP, 'fleet-stop', 'drained');
       console.log('rev: fleet drained — supervisor exiting.');
-      resolve();
+      resolve(0);
     };
 
     const launch = (s: Slot) => {
@@ -142,6 +160,12 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
       // ancestor chain breaks has lost its operator. Drain rather than run
       // unattended — the 2026-08-28 swarm was ~28 such trees, some driving
       // duplicate fleets against the live store for six days.
+      // A redeploy asked for by a loop that shipped a fix to rev's own code
+      // (H-1046). An ordinary drain, so in-flight iterations still finish.
+      if (!shuttingDown && sHas(SUP, 'REDEPLOY')) {
+        redeploying = readRedeploy();
+        drain('redeploy');
+      }
       if (!shuttingDown && ancestryBroken(lineage)) {
         logEvent(SUP, 'orphaned', `lineage [${lineage.join(' < ')}] broken`);
         drain('orphaned');
@@ -227,6 +251,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
 
     logEvent(SUP, 'fleet-start', `pid=${process.pid} loops=${Object.keys(loops).join(',')}`);
     console.log(`rev: supervisor pid ${process.pid} — ${Object.keys(loops).length} loop(s) in the roster. Stop the machine: rev stop`);
+    if (landed) reportRedeployLanded(g, landed, process.pid);
     for (const cfg of Object.values(loops)) {
       const slot: Slot = { cfg, child: null, fd: null, startedAt: 0, restartStreak: 0, respawnAt: null, resumeTicket: null };
       slots.set(cfg.name, slot);
@@ -244,7 +269,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
       console.log('rev: roster has no loops — nothing to supervise.');
       clearInterval(timer);
       if (usageTimer) clearInterval(usageTimer);
-      resolve();
+      resolve(0);
     }
   });
 }

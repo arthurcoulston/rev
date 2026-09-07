@@ -155,6 +155,21 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   orphaned artifacts came from: see the session process group under `shim.ts`.
   Child stdout/err goes to state/<loop>/console.log; supervisor decisions to
   state/supervisor/events.log. 'supervisor' is a reserved loop name.
+- `redeploy.ts` — activating rev's own committed, tested fix (H-1046). A loop
+  that lands one cannot restart the fleet from inside its own iteration, so it
+  writes a REDEPLOY sentinel (`rev redeploy --ticket <id> --reason ...`); the
+  supervisor honours it at its next poll with an ordinary drain, then exits
+  **75, unsuccessfully on purpose** — the only exit launchd and systemd bring
+  back, and the supervisor that returns is the new code. Deliberately not the
+  reinstall path: nothing boots the job out, so there is no race with launchd's
+  60s ceiling. A REDEPLOY present at startup is the record of the restart that
+  just happened, never a fresh ask — the new supervisor clears it before any
+  poll can read it, which is what stops a redeploy looping forever, and notes
+  the landing on the requesting ticket (best-effort: the loop may have closed
+  it, and Helmo rightly refuses updates on terminal tickets). The drain also
+  means the requesting loop's driver dies mid-iteration, so that iteration's
+  run-end and spend metering are lost — the same cost `rev stop` has always
+  had, and the reason the detached session survives it (H-467) matters here.
 - `service.ts` — reboot resilience: launchd plist (KeepAlive on crash only —
   a drain exits 0 and stays down) / systemd user unit. Units embed
   install-time PATH and REV_HOME because service managers strip env. Both must
@@ -200,6 +215,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 - Start the machine: `node dist/cli.js run` (supervisor over the whole roster).
   Drive one loop: `node dist/cli.js run <loop> [--count N]` (foreground;
   `--count 1` is the assess-early lever).
+- Activate a committed fix on the running fleet: `node dist/cli.js redeploy
+  --ticket <id> --reason "<why>"`. It returns immediately; the drain lands
+  within one poll and the service manager brings the fleet back on the new
+  code. Needs a running supervisor (a cold start already runs current code)
+  and a service manager — with no service installed it warns that the fleet
+  will drain and stay down.
 - Dashboard: `node dist/view.js` (`REV_VIEW_PORT`, default 4500; binds
   127.0.0.1, `REV_VIEW_HOST` to change) — restart after rebuild.
 
@@ -363,7 +384,15 @@ dependency this repo should grow for one link.
   crew's call, not a question for the operator (Arthur, 2026-09-07, H-1046).
   On launchd, reinstall writes the new plist, boots out any loaded supervisor,
   then bootstraps it again; the command names that running work is
-  interrupted rather than leaving the old job silently loaded.
+  interrupted rather than leaving the old job silently loaded. The everyday
+  path for activating a fix is `rev redeploy`, not a reinstall: it needs no
+  bootout, so it cannot race the 60s ceiling.
+- **A redeploy that never comes back must not be silent** (H-1046). The fleet
+  is the thing that would have noticed, so the exiting supervisor arms a
+  detached `redeploy-watch` first: past `redeploy_deadline_seconds` it alarms
+  out of band and files a priority-0 ticket to the human. It always files a
+  FRESH ticket — the requesting one may be closed, and returning a live one
+  would release a claim its holder is still working.
 - The supervisor never overrides a halt sentinel: STOP/HOLD/BLOCKED keep a
   loop down until an operator (or Helm answer) clears them; clearance is
   picked up within one poll.

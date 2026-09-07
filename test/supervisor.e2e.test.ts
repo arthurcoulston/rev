@@ -18,7 +18,7 @@ interface Env {
   env: NodeJS.ProcessEnv;
 }
 
-function setup(loopsToml: string): Env {
+function setup(loopsToml: string, extraGlobal = ''): Env {
   const home = mkdtempSync(join(tmpdir(), 'rev-fleet-'));
   const db = join(home, 'helm.db');
   writeFileSync(
@@ -31,6 +31,7 @@ poll_seconds = 1
 respawn_backoff_seconds = 1
 respawn_backoff_cap_seconds = 4
 min_uptime_seconds = 1
+${extraGlobal}
 ${loopsToml}`,
   );
   return { home, env: { ...process.env, REV_HOME: home, HELMO_DB: db } };
@@ -275,6 +276,99 @@ mock_cmd = "true"
         const p = loopPid(e, n);
         if (p) process.kill(p, 'SIGKILL');
       }
+    }
+  });
+  it('a loop redeploys the fleet to activate its own fix, with no human in the path (H-1046)', { timeout: 90000 }, async () => {
+    const e = setup(`[loops.shipper]
+workstream = "ws-ship"
+cwd = "${join(import.meta.dirname, '..')}"
+runtime = "mock"
+mock_cmd = '''
+set -e
+if [ -f "$REV_HOME/asked" ]; then exit 0; fi
+ID=$(node ${HELM_CLI} list --ready --workstream ws-ship --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -z "$ID" ]; then exit 0; fi
+node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
+touch "$REV_HOME/asked"
+npx tsx ${REV_CLI} redeploy --ticket $ID --reason "activate the fix this iteration landed"
+'''
+`);
+    const t = (helm(e, ['create', '--title', 'a fix in rev itself', '--body', 'x', '--workstream', 'ws-ship', '--type', 'build']) as { id: string }).id;
+
+    const first = startFleet(e);
+    let supEvents = '';
+    try {
+      // The supervisor drains itself and exits UNSUCCESSFULLY on purpose:
+      // that is the exit launchd and systemd bring back on the new code.
+      const exited = new Promise<number | null>((r) => first.proc.on('exit', (code) => r(code)));
+      expect(await exited).toBe(75);
+      supEvents = readFileSync(join(e.home, 'state', 'supervisor', 'events.log'), 'utf8');
+      expect(supEvents).toMatch(/redeploy-ask\s+by=shipper ticket=H-/);
+      expect(supEvents).toMatch(/drain\s+signal=redeploy/);
+      expect(supEvents).toMatch(/fleet-stop\s+drained for redeploy/);
+      expect(existsSync(join(e.home, 'state', 'supervisor', 'REDEPLOY'))).toBe(true);
+      // Nothing was asked of the human anywhere in that.
+      expect((helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets).toHaveLength(0);
+    } finally {
+      first.proc.kill('SIGKILL');
+    }
+
+    // The service manager's part, played by hand: start it again. The new
+    // supervisor treats the sentinel as the record of a landing, not a fresh
+    // ask — otherwise a redeploy would loop forever — and says so on the ticket.
+    const second = startFleet(e);
+    try {
+      await waitFor(() => !existsSync(join(e.home, 'state', 'supervisor', 'REDEPLOY')), 'redeploy record cleared at startup');
+      await waitFor(() => (helm(e, ['get', t]) as { evidence: unknown[] }).evidence.length > 0, 'landing noted on the ticket');
+      const ticket = helm(e, ['get', t]) as { status: string; evidence: { ref: string }[] };
+      expect(ticket.status).toBe('in_progress');
+      expect(ticket.evidence[0]!.ref).toBe(join(e.home, 'state', 'supervisor', 'events.log'));
+      const after = readFileSync(join(e.home, 'state', 'supervisor', 'events.log'), 'utf8');
+      expect(after).toMatch(/redeploy-done\s+by=shipper ticket=H-/);
+      expect(after.slice(supEvents.length)).toContain('fleet-start');
+      // It stays landed: the record is gone, so no second drain follows.
+      await sleep(3000);
+      expect(loopPid(e, 'supervisor')).not.toBeNull();
+    } finally {
+      second.proc.kill('SIGKILL');
+      const p = loopPid(e, 'shipper');
+      if (p) process.kill(p, 'SIGKILL');
+    }
+  });
+
+  it('a redeploy nothing comes back from reaches the human, named (H-1046)', { timeout: 90000 }, async () => {
+    const e = setup(
+      `[loops.quiet]
+workstream = "ws-quiet"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+`,
+      'redeploy_deadline_seconds = 6',
+    );
+    const { proc } = startFleet(e);
+    try {
+      await waitFor(() => loopPid(e, 'quiet') !== null, 'loop up');
+      const exited = new Promise<number | null>((r) => proc.on('exit', (code) => r(code)));
+      rev(e, ['redeploy', '--reason', 'activate a fix', '--by', 'tester']);
+      expect(await exited).toBe(75);
+
+      // Nothing restarts it. The watch armed at the drain is the only thing
+      // still running, and the outage must not be silent.
+      await waitFor(
+        () => (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets.length === 1,
+        'the failed redeploy reached the human',
+        40000,
+      );
+      const filed = (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: { id: string; title: string }[] }).tickets[0]!;
+      expect(filed.title).toContain('no supervisor came back');
+      const full = helm(e, ['get', filed.id]) as { question: { situation: string } };
+      expect(full.question.situation).toContain('no supervisor returned within 6s');
+      expect(readFileSync(join(e.home, 'state', 'supervisor', 'events.log'), 'utf8')).toContain('redeploy-failed');
+    } finally {
+      proc.kill('SIGKILL');
+      const p = loopPid(e, 'quiet');
+      if (p) process.kill(p, 'SIGKILL');
     }
   });
 });

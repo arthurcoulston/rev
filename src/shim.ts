@@ -30,8 +30,18 @@ export function cleanEnv(): NodeJS.ProcessEnv {
 // channel for tool provenance. Committer is git's own field for "who made
 // this commit", so `git log --committer=mason` answers that in any repo
 // without depending on an agent having read an instruction.
+// REV_LOOP and REV_CLI travel with every session, not just the mock's: a
+// session that has to reach the harness — asking for a redeploy of the fix it
+// just landed (H-1046) — needs to name itself and to find the CLI whether or
+// not `rev` is on its PATH.
 export function sessionEnv(l: LoopConfig): NodeJS.ProcessEnv {
-  return { ...cleanEnv(), GIT_COMMITTER_NAME: l.name, GIT_COMMITTER_EMAIL: `${l.name}@crew.local` };
+  return {
+    ...cleanEnv(),
+    GIT_COMMITTER_NAME: l.name,
+    GIT_COMMITTER_EMAIL: `${l.name}@crew.local`,
+    REV_LOOP: l.name,
+    REV_CLI: process.argv[1] ?? '',
+  };
 }
 
 export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: string, model = l.model, choice?: RunChoice): SessionResult {
@@ -362,7 +372,7 @@ function runMock(l: LoopConfig, prompt: string, model: string): SessionResult {
   const res = spawnSync('bash', ['-c', l.mock_cmd], {
     cwd: l.cwd,
     encoding: 'utf8',
-    env: { ...sessionEnv(l), REV_LOOP: l.name, REV_PROMPT: prompt, REV_MODEL: model, HELMO_ACTOR: JSON.stringify(loopActor(l, model)) },
+    env: { ...sessionEnv(l), REV_PROMPT: prompt, REV_MODEL: model, HELMO_ACTOR: JSON.stringify(loopActor(l, model)) },
     ...SESSION_GROUP,
   });
   cleanupSessionGroup(res.pid);
