@@ -18,7 +18,8 @@ import { stateDir } from './config.js';
 import { respawnDecide } from './ladder.js';
 import { pollUsage } from './usage.js';
 import { rotateOpenFd } from './logretention.js';
-import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet } from './sentinels.js';
+import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
+import { answeredResumeEscalation, completeAnsweredResume, failAnsweredResume } from './helm.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 
 const SUP = 'supervisor';
@@ -30,6 +31,7 @@ interface Slot {
   startedAt: number;
   restartStreak: number; // consecutive unhealthy exits
   respawnAt: number | null; // backoff expiry (ms epoch); null = waiting on sentinels/foreign pid
+  resumeTicket: string | null; // answered block ticket awaiting a healthy restart
 }
 
 function halted(name: string): boolean {
@@ -92,6 +94,18 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
           finishIfDrained();
           return;
         }
+        if (s.resumeTicket) {
+          const ticket = s.resumeTicket;
+          s.resumeTicket = null;
+          const detail = `process exited with code ${code ?? 'unknown'} after ${Math.round((Date.now() - s.startedAt) / 1000)}s`;
+          sSet(name, 'BLOCKED', `automatic resume failed: ${detail}\nat=${new Date().toISOString()}\n`);
+          try {
+            failAnsweredResume(g, s.cfg, ticket, detail);
+            logEvent(name, 'resume-failed', `ticket=${ticket} ${detail}`);
+          } catch (e) {
+            logEvent(name, 'resume-failure-alarm-failed', `ticket=${ticket} ${String(e).slice(0, 200)}`);
+          }
+        }
         const uptime = Math.round((Date.now() - s.startedAt) / 1000);
         const healthy = code === 0 && uptime >= g.min_uptime_seconds;
         s.restartStreak = healthy ? 0 : s.restartStreak + 1;
@@ -148,8 +162,31 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
         // reopens its fd, so unbounded growth is only caught here, not at
         // spawn (H-434).
         if (s.child && s.fd !== null) rotateOpenFd(join(stateDir(s.cfg.name), 'console.log'), s.fd);
+        if (s.child && s.resumeTicket && Date.now() - s.startedAt >= g.min_uptime_seconds * 1000) {
+          const ticket = s.resumeTicket;
+          try {
+            completeAnsweredResume(g, ticket, join(stateDir(s.cfg.name), 'RUNNING'));
+            s.resumeTicket = null;
+            logEvent(s.cfg.name, 'resume-complete', `ticket=${ticket}`);
+          } catch (e) {
+            logEvent(s.cfg.name, 'resume-completion-failed', `ticket=${ticket} ${String(e).slice(0, 200)}`);
+          }
+        }
         if (s.child || shuttingDown) continue;
         const name = s.cfg.name;
+        if (sHas(name, 'BLOCKED')) {
+          try {
+            const ticket = answeredResumeEscalation(g, s.cfg);
+            if (ticket) {
+              s.resumeTicket = ticket;
+              sClear(name, 'BLOCKED');
+              streakReset(name, 'fail', 'limit');
+              logEvent(name, 'answer-resume', `ticket=${ticket} BLOCKED cleared`);
+            }
+          } catch (e) {
+            logEvent(name, 'answer-resume-check-failed', String(e).slice(0, 200));
+          }
+        }
         if (s.respawnAt !== null) {
           if (Date.now() < s.respawnAt) continue;
           if (halted(name)) {
@@ -191,7 +228,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
     logEvent(SUP, 'fleet-start', `pid=${process.pid} loops=${Object.keys(loops).join(',')}`);
     console.log(`rev: supervisor pid ${process.pid} — ${Object.keys(loops).length} loop(s) in the roster. Stop the machine: rev stop`);
     for (const cfg of Object.values(loops)) {
-      const slot: Slot = { cfg, child: null, fd: null, startedAt: 0, restartStreak: 0, respawnAt: null };
+      const slot: Slot = { cfg, child: null, fd: null, startedAt: 0, restartStreak: 0, respawnAt: null, resumeTicket: null };
       slots.set(cfg.name, slot);
       const foreign = pidAlive(cfg.name);
       if (foreign) {

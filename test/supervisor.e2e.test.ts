@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HELMO_CLI as HELM_CLI, HELMO_SERVER } from './helmo.js';
+import { Store } from '../../helmo/src/store.js';
 
 const REV_CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 
@@ -29,6 +30,7 @@ helmo_db = "${db}"
 poll_seconds = 1
 respawn_backoff_seconds = 1
 respawn_backoff_cap_seconds = 4
+min_uptime_seconds = 1
 ${loopsToml}`,
   );
   return { home, env: { ...process.env, REV_HOME: home, HELMO_DB: db } };
@@ -42,6 +44,19 @@ function helm(e: Env, args: string[], actor = '{"name":"seeder","kind":"agent","
 
 function rev(e: Env, args: string[]): string {
   return execFileSync('npx', ['tsx', REV_CLI, ...args], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+}
+
+function answerResume(e: Env, ticketId: string): void {
+  const store = new Store(join(e.home, 'helm.db'));
+  try {
+    store.answerTicket(
+      { name: 'Arthur', kind: 'human' },
+      ticketId,
+      { answer: 'Resume this loop once.', resolution: 'resume' },
+    );
+  } finally {
+    store.close();
+  }
 }
 
 function startFleet(e: Env): { proc: ChildProcess; out: () => string } {
@@ -159,6 +174,76 @@ mock_cmd = "true"
       // Resume: the running supervisor picks it back up, no rev run needed.
       rev(e, ['resume', 'solo']);
       await waitFor(() => loopPid(e, 'solo') !== null, 'picked up after resume');
+    } finally {
+      proc.kill('SIGKILL');
+    }
+  });
+
+  it('turns a human resume answer into a healthy running loop and closes the escalation (H-1038)', { timeout: 60000 }, async () => {
+    const e = setup(`[loops.resume-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+continue_cap = 1
+mock_cmd = '''
+if [ -f "$REV_HOME/resume-succeeds" ]; then exit 0; fi
+ID=$(node ${HELM_CLI} list --assignee resume-loop --status in_progress --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -z "$ID" ]; then
+  ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+  node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
+fi
+node ${HELM_CLI} update --ticket $ID --note "kept producing" --evidence-kind other --evidence-ref burn
+'''
+`);
+    helm(e, ['create', '--title', 'work that burns', '--body', 'x', '--workstream', 'rev-test', '--type', 'ops']);
+    const { proc } = startFleet(e);
+    try {
+      await waitFor(() => existsSync(join(e.home, 'state', 'resume-loop', 'BLOCKED')), 'burn breaker halt');
+      await waitFor(() => (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets.length === 1, 'burn breaker escalation');
+      const escalation = (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: { id: string }[] }).tickets[0]!;
+      writeFileSync(join(e.home, 'resume-succeeds'), '');
+      answerResume(e, escalation.id);
+
+      await waitFor(() => loopPid(e, 'resume-loop') !== null, 'answered loop running');
+      await waitFor(() => (helm(e, ['get', escalation.id]) as { status: string }).status === 'done', 'resume ticket closed');
+      expect(existsSync(join(e.home, 'state', 'resume-loop', 'BLOCKED'))).toBe(false);
+      expect(readFileSync(join(e.home, 'state', 'resume-loop', 'events.log'), 'utf8')).toMatch(/resume-complete.*ticket=H-/);
+    } finally {
+      proc.kill('SIGKILL');
+    }
+  });
+
+  it('blocks again and returns the answered ticket when the restarted loop fails (H-1038)', { timeout: 60000 }, async () => {
+    const e = setup(`[loops.resume-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+continue_cap = 1
+mock_cmd = '''
+if [ -f "$REV_HOME/resume-fails" ]; then exit 1; fi
+ID=$(node ${HELM_CLI} list --assignee resume-loop --status in_progress --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -z "$ID" ]; then
+  ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+  node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
+fi
+node ${HELM_CLI} update --ticket $ID --note "kept producing" --evidence-kind other --evidence-ref burn
+'''
+`);
+    helm(e, ['create', '--title', 'work that burns', '--body', 'x', '--workstream', 'rev-test', '--type', 'ops']);
+    const { proc } = startFleet(e);
+    try {
+      await waitFor(() => existsSync(join(e.home, 'state', 'resume-loop', 'BLOCKED')), 'burn breaker halt');
+      await waitFor(() => (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets.length === 1, 'burn breaker escalation');
+      const escalation = (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: { id: string }[] }).tickets[0]!;
+      writeFileSync(join(e.home, 'resume-fails'), '');
+      answerResume(e, escalation.id);
+
+      await waitFor(() => {
+        const t = helm(e, ['get', escalation.id]) as { status: string; question?: { situation: string } };
+        return t.status === 'awaiting_human' && !!t.question?.situation.includes('restarted worker failed');
+      }, 'restart failure returned to human');
+      expect(existsSync(join(e.home, 'state', 'resume-loop', 'BLOCKED'))).toBe(true);
+      expect(readFileSync(join(e.home, 'state', 'resume-loop', 'events.log'), 'utf8')).toMatch(/resume-failed.*ticket=H-/);
     } finally {
       proc.kill('SIGKILL');
     }

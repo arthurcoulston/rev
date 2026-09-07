@@ -153,6 +153,39 @@ export function openEscalation(g: GlobalConfig, l: LoopConfig): string | null {
   return null;
 }
 
+interface EscalationState {
+  id: string;
+  status: string;
+  last_answer: { resolution: string } | null;
+}
+
+/** An answered resume is process-control input, not work for the halted seat. */
+export function answeredResumeEscalation(g: GlobalConfig, l: LoopConfig): string | null {
+  const id = openEscalation(g, l);
+  if (!id) return null;
+  const ticket = run(g, ['get', id]) as EscalationState;
+  return ticket.status === 'open' && ticket.last_answer?.resolution === 'resume' ? id : null;
+}
+
+export function completeAnsweredResume(g: GlobalConfig, ticketId: string, runningPath: string): void {
+  run(g, [
+    'update', '--ticket', ticketId,
+    '--note', 'Rev applied the human resume answer; the supervisor restarted the loop and confirmed it stayed running.',
+    '--status', 'done', '--confidence', 'routine',
+    '--evidence-kind', 'file', '--evidence-ref', runningPath,
+  ], revActor());
+}
+
+export function failAnsweredResume(g: GlobalConfig, l: LoopConfig, ticketId: string, detail: string): void {
+  run(g, [
+    'return', '--ticket', ticketId,
+    '--situation', `Rev applied the human resume answer for loop '${l.name}', but the restarted worker failed before it was healthy: ${detail}. The loop is blocked again.`,
+    '--question', `Should loop '${l.name}' be investigated before another restart?`,
+    '--recommendation', 'investigate — the requested restart was attempted and immediately failed, so repeating it would be a blind retry',
+    '--if-unanswered', `${scopeLabel(l)} has no '${l.name}' worker until the new failure is resolved`,
+  ], revActor());
+}
+
 function escalationTitle(l: LoopConfig): string {
   return `Loop '${l.name}' is blocked: needs a decision`;
 }
