@@ -281,6 +281,151 @@ fi
     expect(events).toMatch(/run-end.*iter=1/);
   });
 
+  it('a handoff wakes an idle scoped seat on the next poll, with the idle floor still fresh (H-1072)', async () => {
+    // The incident this fixes: ward idled at 02:57Z, H-1053 was handed back at
+    // 03:20Z, and the seat slept until 03:58Z because the floor was armed. The
+    // floor is set to an hour here; waking inside it is the whole assertion.
+    const e = setup(`[loops.handoff-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+idle_floor_s = 3600
+mock_cmd = "true"
+`);
+    // Reserved elsewhere, so the seat's first pass is genuinely empty-handed.
+    const id = (helm(e, [
+      'create', '--title', 'Work that starts in another seat', '--body', 'handed over mid-idle',
+      '--workstream', 'rev-test', '--type', 'ops', '--assignee', 'other-seat',
+    ]) as { id: string }).id;
+
+    const dir = join(e.home, 'state', 'handoff-loop');
+    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'handoff-loop', '--count', '2'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
+    });
+    try {
+      await waitForFile(join(dir, 'IDLE_AT'), 30_000);
+      const idleAt = parseInt(readFileSync(join(dir, 'IDLE_AT'), 'utf8'), 10);
+      const marker = readFileSync(join(dir, 'events.log'), 'utf8').length;
+
+      helm(e, ['update', '--ticket', id, '--note', 'yours now', '--handoff-to', 'handoff-loop']);
+
+      const deadline = Date.now() + 25_000;
+      let tail = '';
+      while (!/run-start.*iter=2/.test(tail)) {
+        if (Date.now() >= deadline) throw new Error(`the handoff never drew a second iteration; saw: ${tail}`);
+        await new Promise((r) => setTimeout(r, 25));
+        tail = readFileSync(join(dir, 'events.log'), 'utf8').slice(marker);
+      }
+      expect(tail).toMatch(/wake .*ready=1/);
+      // Woken while the hour-long floor was still fresh — the old gate would
+      // have held this wake until 3600s after idleAt. Read the wake's own
+      // stamp, not the clock now, so a slow machine cannot flatter the number.
+      const wokeAt = Date.parse(tail.match(/^(\S+) wake\s/m)![1]!);
+      expect(wokeAt - idleAt).toBeLessThan(60_000);
+    } finally {
+      child.kill('SIGKILL');
+    }
+  });
+
+  it('a note on in-scope work is motion, but never wakes an idle scoped seat (H-1072)', async () => {
+    // The H-336 desk-noise shape, which is why the floor existed at all: a
+    // ticket the seat cannot draw gets commented on. changed_since goes true
+    // and nothing became ready. With the floor at 0 there is nothing else
+    // holding the wake, so this proves the gate itself, not a debounce.
+    const e = setup(`[loops.quiet-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+idle_floor_s = 0
+mock_cmd = "true"
+`);
+    const id = (helm(e, [
+      'create', '--title', 'Someone else’s work, in the watched stream', '--body', 'never ready for this seat',
+      '--workstream', 'rev-test', '--type', 'ops', '--assignee', 'other-seat',
+    ]) as { id: string }).id;
+
+    const dir = join(e.home, 'state', 'quiet-loop');
+    const polled = instrumentSuccessfulWakeChecks(e);
+    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'quiet-loop', '--count', '2'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
+    });
+    try {
+      await waitForFile(join(dir, 'IDLE'), 30_000);
+      const since = parseInt(readFileSync(join(dir, 'IDLE'), 'utf8').split('\n')[0]!, 10);
+      const marker = readFileSync(join(dir, 'events.log'), 'utf8').length;
+      const polls = () => (existsSync(polled) ? readFileSync(polled, 'utf8').trim().split('\n').length : 0);
+      const before = polls();
+
+      helm(e, ['update', '--ticket', id, '--note', 'a comment that changes nobody’s queue']);
+
+      // The store agrees this is motion with no readiness edge — without this
+      // the silence below could be silence about nothing.
+      const w = helm(e, [
+        'wake-check', '--workstream', 'rev-test', '--assignee', 'quiet-loop', '--since-seq', String(since),
+      ]) as { changed_since: boolean; newly_ready_count: number };
+      expect(w.changed_since).toBe(true);
+      expect(w.newly_ready_count).toBe(0);
+
+      // Two more completed polls saw that motion and declined to wake.
+      const deadline = Date.now() + 25_000;
+      while (polls() < before + 2) {
+        if (Date.now() >= deadline) throw new Error('timed out waiting for post-note wake-checks');
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      const tail = readFileSync(join(dir, 'events.log'), 'utf8').slice(marker);
+      expect(tail).not.toMatch(/wake\s/);
+      expect(tail).not.toMatch(/run-start.*iter=2/);
+    } finally {
+      child.kill('SIGKILL');
+    }
+  });
+
+  it('an hour asleep on standing ready work resyncs the seat (H-1072)', async () => {
+    // The backstop for a readiness edge Rev never saw: no motion, nothing
+    // newly ready, and a ticket the seat could draw sitting there. It is a
+    // safety net and not a debounce — the handoff test above wakes on a fresh
+    // IDLE_AT, so this hourly path never stands in front of an immediate wake.
+    const e = setup(`[loops.resync-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+idle_floor_s = 0
+mock_cmd = "true"
+`);
+    seedTicket(e, 'Standing ready work the seat left behind');
+
+    const dir = join(e.home, 'state', 'resync-loop');
+    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'resync-loop', '--count', '2'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
+    });
+    try {
+      await waitForFile(join(dir, 'IDLE_AT'), 30_000);
+      const since = parseInt(readFileSync(join(dir, 'IDLE'), 'utf8').split('\n')[0]!, 10);
+      const marker = readFileSync(join(dir, 'events.log'), 'utf8').length;
+
+      // Nothing has moved and nothing became ready: only the clock can wake it.
+      const w = helm(e, [
+        'wake-check', '--workstream', 'rev-test', '--assignee', 'resync-loop', '--since-seq', String(since),
+      ]) as { changed_since: boolean; newly_ready_count: number; ready_count: number };
+      expect(w.changed_since).toBe(false);
+      expect(w.newly_ready_count).toBe(0);
+      expect(w.ready_count).toBe(1);
+
+      writeFileSync(join(dir, 'IDLE_AT'), String(Date.now() - 2 * 3_600_000));
+
+      const deadline = Date.now() + 25_000;
+      let tail = '';
+      while (!/run-start.*iter=2/.test(tail)) {
+        if (Date.now() >= deadline) throw new Error(`the hourly resync never woke the seat; saw: ${tail}`);
+        await new Promise((r) => setTimeout(r, 25));
+        tail = readFileSync(join(dir, 'events.log'), 'utf8').slice(marker);
+      }
+      expect(tail).toMatch(/wake .*ready=1/);
+    } finally {
+      child.kill('SIGKILL');
+    }
+  });
+
   it('an empty-handed iteration runs on the probe model; one with work in reach does not (H-412)', () => {
     // Iteration 1 has a ready ticket: working model. The mock claims and
     // closes it, so iteration 2 finds nothing ready and nothing held — the

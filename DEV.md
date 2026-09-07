@@ -31,10 +31,16 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   poll forever), no steering fetch at all — its prompt carries none of the
   close-out framing steering is written for — and it defers to the
   constitution instead of naming a stream or the ONE-ticket rule. Per-loop `idle_floor_s` holds wakes after
-  an unproductive pass: motion accumulates but cannot re-wake the loop until
-  the floor elapses (H-336: a live desk session woke ward ~$1/2min against an
-  empty queue; H-545: bosun's own sweep records were the motion that woke it,
-  16 straight iterations to the burn breaker). The first successful poll after
+  an unproductive pass, and since H-1072 it holds them for `'*'` loops ONLY:
+  motion accumulates but cannot re-wake the loop until the floor elapses
+  (H-336: a live desk session woke ward ~$1/2min against an empty queue;
+  H-545: bosun's own sweep records were the motion that woke it, 16 straight
+  iterations to the burn breaker). Motion is still what wakes a store-wide
+  loop, so the floor is still what caps its burn. A scoped loop no longer
+  needs one: it wakes on a readiness edge, and work newly ready for the seat
+  is by definition not the churn the floor was built to absorb. The key is
+  still parsed for those loops but never consulted, and it has been dropped
+  from every scoped loop in the instance roster. The first successful poll after
   a process start bypasses a surviving `IDLE_AT`: the floor spaces passes from
   the same process, but must not make a restarted seat sleep on queued work
   (H-995). BOTH prompts tell a no-change
@@ -567,16 +573,35 @@ dependency this repo should grow for one link.
   yields to live work, it does not wedge a seat on an abandoned one.
   Best-effort — a seat-check failure logs and proceeds. The race window
   (a desk claim landing mid-iteration) is accepted per Arthur's H-558 answer.
-- Every loop wakes on motion only (H-426; store-wide since H-92): ready_count
-  is a standing property, so a scoped loop that declined a ticket and idled
-  was re-woken by that same ticket every poll, forever. One exception: a
-  scoped loop's first successful poll after process start also counts standing
-  ready work, so a loop that went down with work queued picks it up on restart
-  instead of waiting for unrelated motion. A store-wide loop's (`workstream =
-  '*'`) wake-check must additionally carry NO scope at all — assignee
-  included. Helm ORs the scope clauses, so any one of them narrows the whole
-  store back down to tickets already assigned and silences the fresh-filing
-  signal these loops exist for. Cost us bosun's entire wake path until H-138.
+- Wake is MOTION for store-wide loops and READINESS for scoped ones (H-426
+  and H-92, rewritten by H-1072). A scoped loop wakes when Helmo's wake-check
+  reports `newly_ready_count > 0` — currently-ready tickets carrying a
+  readiness-causing event after the idle cursor — and no longer on
+  `changed_since`, which fired on any event in scope and therefore on pure
+  noise. That noise is what made the idle floor necessary, and the floor is
+  what cost real work: ward idled 02:57Z, H-1053 was handed back to it 03:20Z,
+  and it woke 03:58Z on the timer. Three rules sit alongside the edge. The
+  restart pickup stands (first successful poll after process start counts
+  standing ready work, so a seat that went down with work queued does not wait
+  for unrelated motion, H-995). An hourly resync wakes a seat that has been
+  idle an hour with ready work in reach — a backstop for a readiness edge Rev
+  never saw, never a debounce: the immediate path does not consult it, so it
+  cannot delay a handoff. And an absent `newly_ready_count` falls back to the
+  old rule, so a Rev running against an older Helmo degrades to the previous
+  behaviour instead of wedging a seat.
+  THE OLD OBJECTION, and why it no longer holds: readiness was rejected here
+  because ready_count is a standing property, so a ticket a seat silently
+  declined would re-wake it every poll, forever. Two things changed. H-1071
+  makes every pass-over a recorded disposition, which takes the ticket out of
+  ready; and "newly ready SINCE THE CURSOR" means an untouched ticket cannot
+  wake a seat a second time even where H-1071 is not yet perfectly obeyed.
+  Neither half would be enough on its own.
+  A store-wide loop keeps `changed_since` exactly as it was — fresh filings
+  are bosun's work — and its wake-check must additionally carry NO scope at
+  all, assignee included. Helm ORs the scope clauses, so any one of them
+  narrows the whole store back down to tickets already assigned and silences
+  the fresh-filing signal these loops exist for. Cost us bosun's entire wake
+  path until H-138.
 
 ## Neighbors
 
