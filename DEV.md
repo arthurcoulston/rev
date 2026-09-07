@@ -358,10 +358,12 @@ dependency this repo should grow for one link.
 - Roster `version` is constitution provenance — bump it when a loop's profile
   changes.
 - Reboot resilience is opt-in: `rev service install` (launchd/systemd user
-  service). Installing changes what runs at login — operator's call, never an
-  agent's. On launchd, reinstall writes the new plist, boots out any loaded
-  supervisor, then bootstraps it again; the command names that running work is
-  interrupted rather than leaving the old job silently loaded (H-874).
+  service). First install changes what runs at login — operator's call, never
+  an agent's (H-874). Reinstall to activate a committed, tested fix is the
+  crew's call, not a question for the operator (Arthur, 2026-09-07, H-1046).
+  On launchd, reinstall writes the new plist, boots out any loaded supervisor,
+  then bootstraps it again; the command names that running work is
+  interrupted rather than leaving the old job silently loaded.
 - The supervisor never overrides a halt sentinel: STOP/HOLD/BLOCKED keep a
   loop down until an operator (or Helm answer) clears them; clearance is
   picked up within one poll.
