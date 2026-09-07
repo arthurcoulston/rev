@@ -69,6 +69,26 @@ export function revActor(): object {
   return { name: 'rev', kind: 'agent', model: 'rev-harness', version: '0.1.0' };
 }
 
+/** Why a helmo-cli call failed, in the store's own words. execFileSync's
+ *  message is the command line and nothing else, so a caller that logs
+ *  String(e) records what it ran and never what Helm said back — which is how
+ *  a refusal on a closed ticket read for a day as a missing actor (H-1118).
+ *  The CLI prints {"error": ...} to stderr and exits 1; that is the reason. */
+export function cliError(e: unknown): string {
+  const err = e as { stderr?: string | Buffer; message?: string };
+  const raw = String(err.stderr ?? '').trim();
+  try {
+    return String((JSON.parse(raw) as { error?: unknown }).error ?? raw);
+  } catch {
+    return raw || String(err.message ?? e);
+  }
+}
+
+/** A ticket's current status. A read, so no actor is needed. */
+export function ticketStatus(g: GlobalConfig, ticketId: string): string {
+  return (run(g, ['get', ticketId]) as { status: string }).status;
+}
+
 /** Human-readable scope for logs and escalations: '*' loops watch the whole store. */
 export function scopeLabel(l: LoopConfig): string {
   return l.workstream === '*' ? 'all workstreams' : `workstream '${l.workstream}'`;

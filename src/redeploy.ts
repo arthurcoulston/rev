@@ -17,7 +17,7 @@ import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { stateDir } from './config.js';
 import { notifyOperator } from './health.js';
-import { redeployFailed, redeployLanded } from './helm.js';
+import { cliError, redeployFailed, redeployLanded, ticketStatus } from './helm.js';
 import { logEvent, pidAlive, sGet, sSet } from './sentinels.js';
 import { GlobalConfig } from './types.js';
 
@@ -76,14 +76,28 @@ export function eventsPath(): string {
 /** Report a landing on the requesting ticket. Best-effort by design: the
  *  ticket may have been closed by the loop that asked (Helmo refuses updates on
  *  terminal tickets, rightly), and the landing is on the events.log the request
- *  attached either way. A failed note must never affect the fleet coming up. */
+ *  attached either way. A failed note must never affect the fleet coming up.
+ *
+ *  A closed ticket is the ordinary case, not a fault: the asking loop finishes
+ *  its close-out before the drain it asked for lands, so it is done by the time
+ *  a supervisor is back to write. Every note lost before H-1118 was that, and
+ *  logging them as failures — with only the command line for a reason — read
+ *  for a day as a Helm identity Rev was not sending. Ask the store first, so
+ *  the permanent record staying permanent is recorded as the skip it is, and
+ *  anything left in the failure branch is a real one with the store's own
+ *  words attached. */
 export function reportRedeployLanded(g: GlobalConfig, r: RedeployRequest, pid: number): void {
   logEvent(SUP, 'redeploy-done', `by=${r.by} ticket=${r.ticket ?? '-'} pid=${pid} asked=${r.requested_at}`);
   if (!r.ticket) return;
   try {
+    const status = ticketStatus(g, r.ticket);
+    if (status === 'done' || status === 'cancelled') {
+      logEvent(SUP, 'redeploy-note-skipped', `ticket=${r.ticket} is ${status}; the landing stands in the redeploy-done line above`);
+      return;
+    }
     redeployLanded(g, r.ticket, r, pid, eventsPath());
   } catch (e) {
-    logEvent(SUP, 'redeploy-note-failed', `ticket=${r.ticket} ${String(e).slice(0, 200)}`);
+    logEvent(SUP, 'redeploy-note-failed', `ticket=${r.ticket} ${cliError(e)}`.slice(0, 300));
   }
 }
 

@@ -216,8 +216,20 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   60s ceiling. A REDEPLOY present at startup is the record of the restart that
   just happened, never a fresh ask — the new supervisor clears it before any
   poll can read it, which is what stops a redeploy looping forever, and notes
-  the landing on the requesting ticket (best-effort: the loop may have closed
-  it, and Helmo rightly refuses updates on terminal tickets). Asking mid-work
+  the landing on the requesting ticket. That note is best-effort by design, and
+  a **closed ticket is the ordinary case, not a fault** (H-1118): the loop that
+  asks finishes its close-out during the drain it asked for, so it is done by
+  the time a supervisor is back to write, and Helm rightly refuses writes on a
+  terminal ticket. So the status is read first and a terminal one logged as
+  `redeploy-note-skipped`; only a real failure is `redeploy-note-failed`, and
+  it now carries Helm's own words via `cliError` rather than execFileSync's
+  message, which is the command line and nothing else. Five landings in one day
+  were logged as failures with that message, and it read as Rev calling Helm
+  without an identity — it never was. **Nothing is dropped and no new record is
+  filed for it:** the landing is the `redeploy-done` line in events.log, which
+  is the very file the note offers as its evidence, so a skipped note costs a
+  reader nothing. Filing a fresh ticket per successful routine redeploy would
+  put noise in the human's queue to record a success. Asking mid-work
   is safe because the drain's SIGTERM to the requester's own driver is deferred
   past the in-flight iteration like any other, so the restart lands after the
   iteration ends with its run-end and metering intact. Measured on the live
