@@ -42,25 +42,27 @@ function tryWakeCheck(g: GlobalConfig, l: LoopConfig, sinceSeq: number): WakeChe
 // One stream reads as "the workstream" and keeps the wording every seat has
 // been running. Several must be named, because a goal met in one says nothing
 // about the others — and the close-out cue is the whole reason that matters
-// (H-954). Streams carrying neither goal nor budget still get named in the
-// plural preamble: knowing a held stream is unsteered is itself steering.
+// (H-954). Streams carrying neither goal nor budget add no steering and stay
+// out of the preamble; routing the work is already enough context (H-1127).
 export function steeringText(streams: WorkstreamInfo[]): string {
-  const goals = streams.filter((w) => w.goal);
-  const budgets = streams.filter((w) => w.budget_usd);
-  if (goals.length === 0 && budgets.length === 0) return '';
+  const steered = streams.filter((w) => w.goal || w.budget_usd !== null);
+  const goals = steered.filter((w) => w.goal);
+  const budgets = steered.filter((w) => w.budget_usd !== null);
+  if (steered.length === 0) return '';
   const money = (w: WorkstreamInfo) =>
     `$${w.spent_usd.toFixed(2)} of $${(w.budget_usd ?? 0).toFixed(2)} spent, $${(w.remaining_usd ?? 0).toFixed(2)} remains`;
-  if (streams.length <= 1) {
-    const w = streams[0]!;
+  if (steered.length === 1) {
+    const w = steered[0]!;
     return (
-      (w.goal ? `The workstream's goal — what done means for the whole stream: ${w.goal}. If the goal is already met, closing out is the right move; do not manufacture polish. ` : '') +
-      (w.budget_usd ? `Budget: ${money(w)}. The budget is the plan — take the highest-value work first; if it is exhausted, close out honestly with residuals documented rather than starting more. ` : '')
+      (w.goal ? `The workstream '${w.name}' — what done means for the whole stream: ${w.goal}. If the goal is already met, closing out is the right move; do not manufacture polish. ` : '') +
+      (w.budget_usd !== null ? `Budget for '${w.name}': ${money(w)}. The budget is the plan — take the highest-value work first; if it is exhausted, close out honestly with residuals documented rather than starting more. ` : '')
     );
   }
   return (
-    `You hold work in more than one workstream (${streams.map((w) => `'${w.name}'`).join(', ')}), and a goal met in one says nothing about the others. ` +
+    `You hold steered work in more than one workstream (${steered.map((w) => `'${w.name}'`).join(', ')}). ` +
+    (goals.length ? `A goal met in one says nothing about the others. ` : '') +
     goals.map((w) => `'${w.name}' — what done means for that stream: ${w.goal}. `).join('') +
-    (goals.length ? `If a stream's goal is already met, closing out that stream's work is the right move; do not manufacture polish. Streams named above without a goal here have none set — treat them as unsteered, not as finished. ` : '') +
+    (goals.length ? `If a stream's goal is already met, closing out that stream's work is the right move; do not manufacture polish. ` : '') +
     budgets.map((w) => `Budget for '${w.name}': ${money(w)}. `).join('') +
     (budgets.length ? `A budget is the plan — take the highest-value work first; where one is exhausted, close out that stream honestly with residuals documented rather than starting more. ` : '')
   );

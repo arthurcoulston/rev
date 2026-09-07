@@ -23,10 +23,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   individually, and the close-out cue becomes per-stream — because the old
   singular "if the goal is already met, closing out is the right move" was
   said about the WATCHED stream while the session's actual work sat in
-  another. A held stream with no goal is still named, as unsteered rather
-  than finished; dropping it would restore the singular wording and the
-  defect with it. `workstream = "*"` makes a loop store-wide (H-92, built for
-  bosun): wake is unscoped but fires on MOTION ONLY (changed_since, never
+  another. Only streams with a goal or budget appear in the preamble; routed
+  streams carrying neither add no steering and naming them in every iteration
+  is prompt noise (H-1127). `workstream = "*"` makes a loop store-wide (H-92,
+  built for bosun): wake is unscoped but fires on MOTION ONLY (changed_since, never
   ready_count — the whole store's standing backlog would wake a judge every
   poll forever), no steering fetch at all — its prompt carries none of the
   close-out framing steering is written for — and it defers to the

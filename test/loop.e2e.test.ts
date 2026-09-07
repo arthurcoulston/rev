@@ -778,22 +778,18 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
 `);
     seedTicket(e, 'Work in the watched stream');
     helm(e, ['create', '--title', 'Routed in from elsewhere', '--body', 'reserved to this seat', '--workstream', 'rev-elsewhere', '--type', 'ops', '--assignee', 'multi-loop']);
-    for (const [name, goal] of [['rev-test', 'the gala happens'], ['rev-elsewhere', 'the archive is catalogued']]) {
-      helm(e, ['workstream-set', '--name', name!, '--goal', goal!], '{"name":"operator","kind":"human"}');
-    }
+    helm(e, ['workstream-set', '--name', 'rev-test', '--goal', 'the gala happens'], '{"name":"operator","kind":"human"}');
+    helm(e, ['workstream-set', '--name', 'rev-elsewhere', '--budget-usd', '25'], '{"name":"operator","kind":"human"}');
     const out = rev(e, ['run', 'multi-loop', '--count', '1']);
     expect(out).toContain("'rev-test' — what done means for that stream: the gala happens");
-    expect(out).toContain("'rev-elsewhere' — what done means for that stream: the archive is catalogued");
-    expect(out).toContain('a goal met in one says nothing about the others');
+    expect(out).toContain("Budget for 'rev-elsewhere': $0.00 of $25.00 spent");
+    expect(out).toContain('A goal met in one says nothing about the others');
     // The sentence that made the old behaviour dangerous rather than merely
     // wrong: one stream's goal must never authorize closing out another's.
     expect(out).not.toContain('If the goal is already met, closing out is the right move');
   });
 
-  it('a held stream with no goal is named as unsteered, not left looking finished (H-954)', () => {
-    // The commonest shape, and the one that bit: the watched stream has a goal
-    // and the held stream has none. Dropping the goalless stream would restore
-    // the singular wording and the whole defect with it.
+  it('a held stream without steering stays out of the prompt (H-1127)', () => {
     const e = setup(`[loops.quiet-loop]
 workstream = "rev-test"
 cwd = "/tmp"
@@ -803,9 +799,25 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
     helm(e, ['create', '--title', 'Held work in a stream nobody steered', '--body', 'reserved to this seat', '--workstream', 'rev-quiet', '--type', 'ops', '--assignee', 'quiet-loop']);
     helm(e, ['workstream-set', '--name', 'rev-test', '--goal', 'the gala happens'], '{"name":"operator","kind":"human"}');
     const out = rev(e, ['run', 'quiet-loop', '--count', '1']);
-    expect(out).toContain("'rev-quiet'");
-    expect(out).toContain('treat them as unsteered, not as finished');
-    expect(out).not.toContain('If the goal is already met, closing out is the right move');
+    expect(out).toContain("The workstream 'rev-test'");
+    expect(out).not.toContain("'rev-quiet'");
+    expect(out).not.toContain('unsteered');
+  });
+
+  it('three held streams without goals or budgets produce no steering block (H-1127)', () => {
+    const e = setup(`[loops.unsteered-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
+`);
+    for (const name of ['rev-one', 'rev-two']) {
+      helm(e, ['create', '--title', `Held work in ${name}`, '--body', 'reserved to this seat', '--workstream', name, '--type', 'ops', '--assignee', 'unsteered-loop']);
+    }
+    const out = rev(e, ['run', 'unsteered-loop', '--count', '1']);
+    expect(out).not.toContain('what done means');
+    expect(out).not.toContain('Budget for');
+    expect(out).not.toContain('You hold steered work');
   });
 
   it('the idle rule covers the assigned list, not only the watched stream (H-987)', () => {
