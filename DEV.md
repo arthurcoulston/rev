@@ -166,10 +166,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   just happened, never a fresh ask — the new supervisor clears it before any
   poll can read it, which is what stops a redeploy looping forever, and notes
   the landing on the requesting ticket (best-effort: the loop may have closed
-  it, and Helmo rightly refuses updates on terminal tickets). The drain also
-  means the requesting loop's driver dies mid-iteration, so that iteration's
-  run-end and spend metering are lost — the same cost `rev stop` has always
-  had, and the reason the detached session survives it (H-467) matters here.
+  it, and Helmo rightly refuses updates on terminal tickets). Asking mid-work
+  is safe because the drain's SIGTERM to the requester's own driver is deferred
+  past the in-flight iteration like any other, so the restart lands after the
+  iteration ends with its run-end and metering intact. Measured on the live
+  fleet: ask 02:19:59Z, drain 02:20:38Z (the next poll), the last straggler's
+  iteration held it to 02:28:54Z, fleet back 160ms later.
 - `service.ts` — reboot resilience: launchd plist (KeepAlive on crash only —
   a drain exits 0 and stays down) / systemd user unit. Units embed
   install-time PATH and REV_HOME because service managers strip env. Both must
@@ -387,6 +389,12 @@ dependency this repo should grow for one link.
   interrupted rather than leaving the old job silently loaded. The everyday
   path for activating a fix is `rev redeploy`, not a reinstall: it needs no
   bootout, so it cannot race the 60s ceiling.
+- **Never `rev stop` from a loop session to activate a fix** (H-1046). Two
+  things bite at once: the drain blocks on the caller's own driver, which is
+  deferring SIGTERM until the session returns, so it cannot finish while the
+  caller is still working; and when it finally does, it exits 0 — the one exit
+  launchd and systemd deliberately leave down. The fleet stops with nothing to
+  bring it back. `rev redeploy` exists so that neither happens.
 - **A redeploy that never comes back must not be silent** (H-1046). The fleet
   is the thing that would have noticed, so the exiting supervisor arms a
   detached `redeploy-watch` first: past `redeploy_deadline_seconds` it alarms
