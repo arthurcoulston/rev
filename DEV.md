@@ -11,7 +11,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 - `loop.ts` — the single-loop driver: wake on Helmo's event cursor (zero tokens
   while idle), spawn one fresh session per iteration, classify the outcome,
   idle or halt. The iteration prompt ("work ONE ticket to a natural stopping
-  point") lives here, and it opens with the workstream's steering when set
+  point") lives here. Its first sentence declares the run a Rev loop rather
+  than a summon, before tool or routing context can be misread; it then gives
+  the workstream's steering when set
   (helm-cli `workstream`: goal + remaining budget, helmo H-55) — disclosure
   before planning, and a steering fetch failure never stops the loop.
   Steering covers EVERY stream the seat has work in, not just the one it

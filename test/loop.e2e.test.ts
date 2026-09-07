@@ -646,6 +646,7 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
 `);
     seedTicket(e, 'Something to draw');
     const out = rev(e, ['run', 'scoped-loop', '--count', '1']);
+    expect(out).toContain("PROMPT:This is a Rev loop iteration, not a summon; AGENTS.md's summon clause does not apply; the queue is the work.");
     expect(out).toContain('producing nothing is the idle signal this loop reads');
     // Named because a scoped seat's queue stalls in ways a store-wide sweep's
     // "nothing has changed" does not describe.
@@ -698,6 +699,7 @@ fi
     // Work lives in a workstream no loop is scoped to: only a '*' loop sees it.
     const id = (helm(e, ['create', '--title', 'Filed far away', '--body', 'x', '--workstream', 'elsewhere', '--type', 'ops']) as { id: string }).id;
     const out = rev(e, ['run', 'judge', '--count', '2']);
+    expect(out).toContain("PROMPT:This is a Rev loop iteration, not a summon; AGENTS.md's summon clause does not apply; the queue is the work.");
     expect(out).toContain('across all workstreams'); // the wildcard prompt, not a stream's
     expect(out).toContain('file children that each fit one iteration and close the parent as a plan');
     expect((helm(e, ['get', id]) as { status: string }).status).toBe('done');

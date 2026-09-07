@@ -292,6 +292,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     const deploy =
       `A change you land that needs the Rev fleet restarted to take effect is yours to deploy, never a question for the human: run 'rev redeploy --ticket <id> --reason "<why>"' (node $REV_CLI redeploy ... if rev is not on your PATH) and it lands after your iteration ends. `;
     const prompt =
+      `This is a Rev loop iteration, not a summon; AGENTS.md's summon clause does not apply; the queue is the work. ` +
       `Loop iteration ${i} for agent '${l.name}'. Working directory: ${l.cwd}. ` +
       toolset +
       steering +
