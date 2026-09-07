@@ -92,7 +92,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   launchd-parented supervisor has an empty chain that can never break, so
   deliberate daemons go through `rev service`, never nohup. Drains also
   escalate: past `drain_grace_seconds` a straggler is SIGKILLed rather than
-  waited on forever (a hung drain ends in an operator kill -9 and orphans).
+  waited on forever (a hung drain ends in an operator kill -9 and orphans) —
+  and the escalation takes the straggler's session group with it (H-1089),
+  because the loop alone is not the whole seat.
 - `health.ts` — fleet-down detection (H-448). A failing wake-check is modelled
   as "no news, try next poll", which is right for contention and wrong for
   anything permanent; past `wedge_cap` consecutive failures the loop is marked
@@ -149,6 +151,22 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   deliberately unreachable when the loop dies during `spawnSync`, so H-467's
   orphaned session still finishes. `test/shim.test.ts` proves both sides with
   real process groups.
+
+  **The one place that cost is not paid is the supervisor's drain escalation**
+  (H-1089). A redeploy drains; a loop mid-iteration defers its SIGTERM past
+  `drain_grace_seconds`; the supervisor SIGKILLs it — and the detached CLI
+  reparented to init and kept working while the returning fleet spawned a
+  SECOND session for the same seat, on the same ready queue, as the same Helmo
+  actor, in the same working trees. It happened to mason on 2026-09-07 and cost
+  H-1086 a trustworthy gate run. So the escalation now enumerates the loop's
+  own session groups *before* the kill (after it, the children are init's and
+  unfindable) and ends them: `sessionGroupsOf` / `endSessionGroup` in
+  `shim.ts`. Only true group LEADERS are signalled — a child sharing its
+  parent's group is skipped, because signalling that group would reach the loop
+  and the supervisor, which is the broadcast H-467 exists to prevent. Past the
+  grace the session has already had its finishing time; two seats is the worse
+  failure. Proven in `test/supervisor.e2e.test.ts` — a mock that records its
+  pid and outlives any grace must be gone once the drain completes.
 
 - `ladder.ts` — pure decision functions for the failure ladder (transient ≠
   failure ≠ apparatus). Unit-tested; change with tests.

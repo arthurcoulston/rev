@@ -278,6 +278,61 @@ mock_cmd = "true"
       }
     }
   });
+  it('the drain escalation ends the straggler\'s session, not just its loop (H-1089)', { timeout: 60000 }, async () => {
+    // The shape that cost H-1086 a gate run: a redeploy drains while an agent
+    // CLI is mid-turn, the grace expires, the loop is SIGKILLed — and the CLI,
+    // in its own detached group (H-467), reparents to init and keeps working
+    // while the returning fleet starts a second session for the same seat.
+    // The mock stands in for the CLI: it records its own pid and outlives any
+    // grace. What must be true after the drain is that pid is gone.
+    const e = setup(
+      `[loops.slow]
+workstream = "ws-slow"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+echo $$ > "$REV_HOME/session.pid"
+sleep 300
+'''
+`,
+      'drain_grace_seconds = 3',
+    );
+    const { proc } = startFleet(e);
+    const sessionPid = (): number => parseInt(readFileSync(join(e.home, 'session.pid'), 'utf8').trim(), 10);
+    const alive = (pid: number): boolean => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    let session = 0;
+    try {
+      await waitFor(() => existsSync(join(e.home, 'session.pid')), 'session started');
+      session = sessionPid();
+      // Two assertions, not one: the session must be genuinely mid-flight when
+      // the drain lands, or its absence afterwards proves nothing.
+      expect(alive(session)).toBe(true);
+
+      const exited = new Promise<number | null>((r) => proc.on('exit', (code) => r(code)));
+      rev(e, ['stop']);
+      expect(await exited).toBe(0);
+
+      await waitFor(() => !alive(session), 'session ended with its loop', 10000);
+      const log = readFileSync(join(e.home, 'state', 'supervisor', 'events.log'), 'utf8');
+      expect(log).toMatch(/drain-kill\s+loop=slow/);
+      expect(log).toMatch(new RegExp(`drain-kill-session\\s+loop=slow group=${session}`));
+    } finally {
+      proc.kill('SIGKILL');
+      try {
+        if (session) process.kill(-session, 'SIGKILL');
+      } catch {
+        /* already gone: the point of the test */
+      }
+    }
+  });
+
   it('a loop redeploys the fleet to activate its own fix, with no human in the path (H-1046)', { timeout: 90000 }, async () => {
     const e = setup(`[loops.shipper]
 workstream = "ws-ship"

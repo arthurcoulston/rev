@@ -19,6 +19,7 @@ import { respawnDecide } from './ladder.js';
 import { pollUsage } from './usage.js';
 import { rotateOpenFd } from './logretention.js';
 import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
+import { endSessionGroup, sessionGroupsOf } from './shim.js';
 import { REDEPLOY_EXIT, RedeployRequest, armRedeployWatch, readRedeploy, reportRedeployLanded } from './redeploy.js';
 import { answeredResumeEscalation, completeAnsweredResume, failAnsweredResume } from './helm.js';
 import { GlobalConfig, LoopConfig } from './types.js';
@@ -175,8 +176,20 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
       if (shuttingDown && drainAt && g.drain_grace_seconds > 0 && Date.now() - drainAt > g.drain_grace_seconds * 1000) {
         for (const s of slots.values()) {
           if (s.child) {
+            // The loop's agent CLI runs in its own detached group (shim.ts,
+            // H-467), so SIGKILLing the loop alone is not enough: the CLI
+            // reparents to init and keeps working, and the fleet that comes
+            // back a second later spawns a SECOND session for the same seat —
+            // same ready queue, same Helmo actor, same working trees (H-1089).
+            // Enumerate before the kill: once the loop is gone its children
+            // are init's and no longer findable from here.
+            const sessions = sessionGroupsOf(s.child.pid);
             logEvent(SUP, 'drain-kill', `loop=${s.cfg.name} pid=${s.child.pid}`);
             s.child.kill('SIGKILL');
+            for (const group of sessions) {
+              logEvent(SUP, 'drain-kill-session', `loop=${s.cfg.name} group=${group}`);
+              endSessionGroup(group);
+            }
           }
         }
         drainAt = 0; // once; exit events finish the drain

@@ -75,7 +75,12 @@ process.exit(result.status ?? 1);
   return marker;
 }
 
-describe('rev e2e (mock runtime, real helm store)', () => {
+// These spawn real processes and drive a real store, so vitest's 5s unit
+// default was never their budget: the slowest already measured 4.0s and 6.0s
+// on a quiet machine, and vitest runs test FILES in parallel — adding one
+// more e2e file elsewhere in the suite is enough to push them over (found
+// while landing H-1089). Budget for the suite's own load, not the quiet case.
+describe('rev e2e (mock runtime, real helm store)', { timeout: 30000 }, () => {
   it('wakes on ready work, session completes it via helm-cli, then idles', () => {
     // The mock "agent": claims the first ready ticket and completes it with evidence.
     const e = setup(`[loops.test-loop]

@@ -2,7 +2,7 @@
 // Contract: run one non-interactive session in the loop's cwd; return the exit
 // code classified per the ladder (0 clean / 75 transient / 78 apparatus),
 // token accounting when the runtime reports it, and the output tail.
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -137,14 +137,39 @@ function logTokens(l: LoopConfig, model: string, tokens?: number, cost?: number,
 // the signal reaches only the loop process, which defers past the in-flight
 // session exactly as the drain is documented to. The cost is deliberate: a
 // SIGKILLed loop leaves its session running to completion as an orphan —
-// one session's tokens, spent finishing and closing its own work.
+// one session's tokens, spent finishing and closing its own work. The one
+// place that cost is NOT paid is the supervisor's drain escalation, which
+// ends the group itself: past the grace the session has had its finishing
+// time, and letting it run means a second session for the same seat when the
+// fleet comes back (H-1089).
 const SESSION_GROUP = { detached: true } as const;
 
-// A completed CLI may leave background children in its detached group. Sweep
-// that group only after the leader has returned; if the loop itself dies while
-// spawnSync is blocked, this code never runs and H-467's close-out protection
-// remains intact. TERM gets a short grace, then KILL bounds cleanup.
-function cleanupSessionGroup(pid: number | undefined): void {
+/** Process-group leaders among a pid's direct children — the detached session
+ *  groups this shim started, and nothing else. A child that shares its parent's
+ *  group is deliberately skipped: signalling THAT group would reach the loop and
+ *  the supervisor above it, which is the broadcast H-467 exists to prevent. The
+ *  supervisor reads this to end a session with the loop it belongs to (H-1089). */
+export function sessionGroupsOf(pid: number | undefined): number[] {
+  if (!pid || process.platform === 'win32') return [];
+  const groups: number[] = [];
+  try {
+    for (const line of execFileSync('ps', ['-eo', 'pid=,ppid=,pgid='], { encoding: 'utf8' }).split('\n')) {
+      const [p, pp, pg] = line.trim().split(/\s+/).map(Number);
+      if (p && pp === pid && p === pg) groups.push(p);
+    }
+  } catch {
+    /* ps unavailable: no group is better than a wrong one */
+  }
+  return groups;
+}
+
+// End one detached session group: TERM for a short grace, then KILL to bound it.
+// Two callers, both narrow. Here, after a CLI has returned, to sweep background
+// children it left behind — if the loop dies while spawnSync is blocked this
+// code never runs, and H-467's close-out protection stays intact. And from the
+// supervisor's drain escalation, where the loop is being SIGKILLed anyway and
+// the session must not outlive it.
+export function endSessionGroup(pid: number | undefined): void {
   if (!pid || process.platform === 'win32') return;
   const alive = (): boolean => {
     try {
@@ -201,7 +226,7 @@ function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string
       ],
       { cwd: l.cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, env: sessionEnv(l), stdio: ['ignore', 'pipe', 'pipe'], ...SESSION_GROUP },
     );
-    cleanupSessionGroup(res.pid);
+    endSessionGroup(res.pid);
     if (res.error) return { rc: 78, cls: 'apparatus', outputTail: `claude CLI not runnable: ${res.error.message}` };
     const stdout = res.stdout ?? '';
     let tokens: number | undefined, cost: number | undefined, tail = stdout;
@@ -340,7 +365,7 @@ function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string,
       ...SESSION_GROUP,
     },
   );
-  cleanupSessionGroup(res.pid);
+  endSessionGroup(res.pid);
   if (res.error) return { rc: 78, cls: 'apparatus', outputTail: `codex CLI not runnable: ${res.error.message}` };
   const run = parseCodexEvents(res.stdout ?? '');
   const tokens = run.usage ? run.usage.input + run.usage.output : undefined;
@@ -375,7 +400,7 @@ function runMock(l: LoopConfig, prompt: string, model: string): SessionResult {
     env: { ...sessionEnv(l), REV_PROMPT: prompt, REV_MODEL: model, HELMO_ACTOR: JSON.stringify(loopActor(l, model)) },
     ...SESSION_GROUP,
   });
-  cleanupSessionGroup(res.pid);
+  endSessionGroup(res.pid);
   const rc = res.status ?? 1;
   const cls = rc === 0 ? 'ok' : rc === 75 ? 'transient' : rc === 78 ? 'apparatus' : 'failure';
   // Mock sessions can report usage the way real runtimes do, so the metering
