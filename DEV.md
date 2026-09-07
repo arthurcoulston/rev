@@ -42,6 +42,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   time-gated, or with the human) and carves out an unasked human question,
   which triage duty still requires; only the '*' prompt carried the
   instruction until H-740.
+  Both prompts also make oversized work stop at the planning boundary: the
+  loop files iteration-sized children and closes the parent as a plan in the
+  same pass, instead of carrying one ticket across repeated iterations
+  (H-1057). The sentence sits after the two draw variants so neither scope can
+  omit it.
   An IDLE sentinel keeps the wake cursor on its first line and a bounded reason
   on its second (H-954): either no executable work exists in the seat's scope,
   held work is non-executable, or a session left executable work untouched.

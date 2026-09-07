@@ -652,6 +652,7 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
     expect(out).toContain('blocked, time-gated, or already sitting with the human');
     // Triage duty still outranks idling: the carve-out must survive rewording.
     expect(out).toContain('question only the human can answer');
+    expect(out).toContain('file children that each fit one iteration and close the parent as a plan');
   });
 
   it('evidence-only update counts as production — why the idle instruction has to exist (H-740)', () => {
@@ -698,6 +699,7 @@ fi
     const id = (helm(e, ['create', '--title', 'Filed far away', '--body', 'x', '--workstream', 'elsewhere', '--type', 'ops']) as { id: string }).id;
     const out = rev(e, ['run', 'judge', '--count', '2']);
     expect(out).toContain('across all workstreams'); // the wildcard prompt, not a stream's
+    expect(out).toContain('file children that each fit one iteration and close the parent as a plan');
     expect((helm(e, ['get', id]) as { status: string }).status).toBe('done');
     expect(existsSync(join(e.home, 'state', 'judge', 'IDLE'))).toBe(true);
   });

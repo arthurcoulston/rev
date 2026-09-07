@@ -283,6 +283,8 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       l.workstream === '*'
         ? `Use your Helmo tools: first list tickets assigned to you, then survey fresh activity and unclaimed filings across all workstreams — your constitution says what your work is. If nothing has materially changed since your last pass, end the session WITHOUT filing a ticket or writing a note: producing nothing is the idle signal this loop reads, and a no-change sweep record is itself fresh motion that wakes you again (H-545). Otherwise work to a natural stopping point, `
         : `Use your Helm tools: first list tickets assigned to you, then ready work in workstream '${l.workstream}'. A ticket reserved for you is yours to work whatever its workstream. If nothing in EITHER list is workable — both are empty, or every ticket is blocked, time-gated, or already sitting with the human — end the session WITHOUT filing a ticket or writing a note: producing nothing is the idle signal this loop reads, and recording the no-change finding re-certifies you as busy and buys another full-price pass, evidence attached or not (H-545, H-740). The one exception is a question only the human can answer that is not already pending — return that once, then stop. Otherwise work ONE ticket to a natural stopping point, `;
+    const split =
+      `If the ticket you pick will not reach a natural stopping point this pass, split it now: file children that each fit one iteration and close the parent as a plan with those children as evidence. `;
     // Deploying a fix the crew has already committed and tested is the crew's
     // call, not a question for the operator (Arthur, H-1046) — and the bar the
     // draw sets for returning to the human is exactly where a loop decides to
@@ -294,6 +296,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       toolset +
       steering +
       draw +
+      split +
       `record progress honestly, then end the session. ` +
       deploy +
       `${l.prompt ?? ''}`;
