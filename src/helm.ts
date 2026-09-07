@@ -11,6 +11,9 @@ export interface WakeCheck {
    *  predates it, and absent for store-wide loops (no assignee in scope). */
   held_count?: number;
   changed_since: boolean;
+  newly_ready_count?: number;
+  newly_ready_ids?: string[];
+  ready_ids?: string[];
 }
 
 export function readyTicketIds(g: GlobalConfig, l: LoopConfig): string[] {

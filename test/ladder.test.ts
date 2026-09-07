@@ -34,6 +34,12 @@ describe('ladderDecide', () => {
 });
 
 describe('wakeDecide (H-92/H-426)', () => {
+  it('uses readiness edges for scoped loops, with fallback and resync', () => {
+    expect(wakeDecide({ changedSince: false, firstPoll: false, workstream: 'rev-dev', readyCount: 1, newlyReadyCount: 1 })).toBe(true);
+    expect(wakeDecide({ changedSince: true, firstPoll: false, workstream: 'rev-dev', readyCount: 0, newlyReadyCount: 0 })).toBe(false);
+    expect(wakeDecide({ changedSince: false, firstPoll: false, workstream: 'rev-dev', readyCount: 1, newlyReadyCount: 0, resyncDue: true })).toBe(true);
+    expect(wakeDecide({ changedSince: true, firstPoll: false, workstream: 'rev-dev', readyCount: 0 })).toBe(true);
+  });
   it('motion wakes every loop', () => {
     expect(wakeDecide({ changedSince: true, firstPoll: false, workstream: 'rev-dev', readyCount: 0 })).toBe(true);
     expect(wakeDecide({ changedSince: true, firstPoll: false, workstream: '*', readyCount: 0 })).toBe(true);

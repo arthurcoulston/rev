@@ -53,8 +53,12 @@ export function wakeDecide(c: {
   firstPoll: boolean;
   workstream: string;
   readyCount: number;
+  newlyReadyCount?: number;
+  resyncDue?: boolean;
 }): boolean {
-  return c.changedSince || (c.firstPoll && c.workstream !== '*' && c.readyCount > 0);
+  if (c.workstream === '*') return c.changedSince;
+  if (c.newlyReadyCount === undefined) return c.changedSince || (c.firstPoll && c.readyCount > 0);
+  return c.newlyReadyCount > 0 || (c.firstPoll && c.readyCount > 0) || (Boolean(c.resyncDue) && c.readyCount > 0);
 }
 
 export function declineDecide(
