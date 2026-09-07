@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const VIEW = join(import.meta.dirname, '..', 'src', 'view.ts');
+const CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 const reasons = {
   empty: 'no executable work is owned by this seat or ready in its watched scope',
   held: "2 tickets remain in this seat's hands, but none is executable",
@@ -63,6 +64,12 @@ workstream = "test"
 cwd = "/tmp"
 runtime = "mock"
 model = "mock"
+
+[loops.seat-held]
+workstream = "test"
+cwd = "/tmp"
+runtime = "mock"
+model = "mock"
 `);
   Object.entries(reasons).forEach(([name, reason], index) => {
     const state = join(home, 'state', name);
@@ -72,6 +79,10 @@ model = "mock"
     writeFileSync(join(state, 'RUNNING'), `${process.pid}\n`);
     writeFileSync(join(state, 'IDLE'), `${[0, 42, 999][index]}\n${reason}\n`);
   });
+  const seatHeld = join(home, 'state', 'seat-held');
+  mkdirSync(seatHeld, { recursive: true });
+  writeFileSync(join(seatHeld, 'RUNNING'), `${process.pid}\n`);
+  writeFileSync(join(seatHeld, 'SEAT_HELD'), "another live session ('desk') holds H-891\n");
 
   const port = await freePort();
   origin = `http://127.0.0.1:${port}`;
@@ -92,6 +103,8 @@ describe('view idle reasons (H-954)', () => {
   it('presents all three bounded reasons in the HTML view', async () => {
     const html = await (await request('/')).text();
     for (const reason of Object.values(reasons)) expect(html).toContain(reason);
+    expect(html).toContain('SEAT_HELD');
+    expect(html).toContain("another live session ('desk') holds H-891");
   });
 
   it('presents all three bounded reasons in /health.json', async () => {
@@ -102,6 +115,17 @@ describe('view idle reasons (H-954)', () => {
       { name: 'empty', state: 'IDLE', reason: reasons.empty },
       { name: 'held', state: 'IDLE', reason: reasons.held },
       { name: 'untouched', state: 'IDLE', reason: reasons.untouched },
+      { name: 'seat-held', state: 'SEAT_HELD', reason: "another live session ('desk') holds H-891" },
     ]);
+  });
+
+  it('distinguishes the held seat in rev status', () => {
+    const output = execFileSync('npx', ['tsx', CLI, 'status'], {
+      cwd: join(import.meta.dirname, '..'),
+      env: { ...process.env, REV_HOME: home },
+      encoding: 'utf8',
+    });
+    expect(output).toMatch(/seat-held\s+SEAT_HELD/);
+    expect(output).toContain('SEAT_HELD=standing down for another live session in this seat');
   });
 });

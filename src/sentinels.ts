@@ -16,6 +16,7 @@ import { Sentinel } from './types.js';
 //   RUNNING  rev: pid + start stamp of the live loop process
 //   PACE     operator/agent: velocity command ("park" or fraction (0,1])
 //   PARKED   loop: acknowledgment that it has actually parked (command != state)
+//   SEAT_HELD loop: standing down for another live session in the same seat
 //   BACKOFF  supervisor: loop crashed; respawn pending (contents = attempt + retry time)
 //   WEDGED   rev: cannot reach Helm at all; alarm raised. NOT a halt — the loop
 //            keeps polling, because the fault is outside it and may clear.

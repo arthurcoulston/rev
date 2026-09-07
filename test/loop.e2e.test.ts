@@ -148,9 +148,11 @@ mock_cmd = "true"
       await until(/seat-held/);
       expect(events()).toMatch(/seat-held.*another live session \('desk'\)/);
       expect(events()).not.toMatch(/run-start/); // no session spent over the foreign hold
+      expect(readFileSync(join(dir, 'SEAT_HELD'), 'utf8')).toMatch(/another live session \('desk'\)/);
       // The desk session finishes its work; the seat clears and the loop runs.
       helm(e, ['update', '--ticket', id, '--note', 'done at the desk', '--status', 'done', '--evidence-kind', 'other', '--evidence-ref', 'x'], desk);
       await until(/run-start/);
+      expect(existsSync(join(dir, 'SEAT_HELD'))).toBe(false);
       expect(events()).toMatch(/seat-clear/);
       expect(events()).toMatch(/run-start/);
     } finally {

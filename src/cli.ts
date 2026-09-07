@@ -73,6 +73,7 @@ function state(name: string): string {
   if (!pid && sHas(name, 'BACKOFF')) return 'BACKOFF';
   if (pid && sHas(name, 'LIMIT')) return 'LIMIT';
   if (pid && sHas(name, 'PARKED')) return 'PARKED';
+  if (pid && sHas(name, 'SEAT_HELD')) return 'SEAT_HELD';
   if (pid && sHas(name, 'IDLE')) return 'IDLE';
   if (pid) return 'RUNNING';
   if (sHas(name, 'RUNNING')) return 'CRASHED';
@@ -145,6 +146,7 @@ switch (cmd) {
       console.log(`${name.padEnd(24)} ${state(name).padEnd(10)} ${String(pid).padEnd(7)} ${pace.padEnd(6)} ${loops[name].workstream}`);
     }
     console.log('\nSTATE: RUNNING=iteration in flight  IDLE=waiting on wake cursor  PARKED=held via PACE');
+    console.log('       SEAT_HELD=standing down for another live session in this seat');
     console.log('       WEDGED=alive but cannot reach Helm — drawing no work; see the loop trace');
     console.log('       LIMIT=waiting out a transient condition  BLOCKED=needs a human (see Helm queue)');
     console.log('       BACKOFF=crashed, supervisor retrying  STOP/HOLD=deliberate halts');

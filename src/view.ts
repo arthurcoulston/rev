@@ -81,6 +81,7 @@ function state(name: string): string {
   if (!pid && sHas(name, 'BACKOFF')) return 'BACKOFF';
   if (pid && sHas(name, 'LIMIT')) return 'LIMIT';
   if (pid && sHas(name, 'PARKED')) return 'PARKED';
+  if (pid && sHas(name, 'SEAT_HELD')) return 'SEAT_HELD';
   if (pid && sHas(name, 'IDLE')) return 'IDLE';
   if (pid) return 'RUNNING';
   if (sHas(name, 'RUNNING')) return 'CRASHED';
@@ -122,6 +123,7 @@ createServer((req, res) => {
         const st = state(l.name);
         const reason = st === 'IDLE'
           ? sGet(l.name, 'IDLE')?.split('\n')[1]
+          : st === 'SEAT_HELD' ? sGet(l.name, 'SEAT_HELD')?.split('\n')[0]
           : st === 'BLOCKED' || st === 'WEDGED' ? sGet(l.name, st)?.split('\n')[0] : undefined;
         return { name: l.name, state: st, workstream: l.workstream, ...(reason ? { reason } : {}) };
       }),
@@ -139,12 +141,13 @@ createServer((req, res) => {
       // cannot reach — so this row is the record (H-448).
       const wedged = st === 'WEDGED' ? `<div class="blockreason">${esc(sGet(l.name, 'WEDGED')?.split('\n')[0])}</div>` : '';
       const idle = st === 'IDLE' ? `<div class="idlereason">${esc(sGet(l.name, 'IDLE')?.split('\n')[1] ?? 'waiting on the wake cursor')}</div>` : '';
+      const seatHeld = st === 'SEAT_HELD' ? `<div class="idlereason">${esc(sGet(l.name, 'SEAT_HELD')?.split('\n')[0] ?? 'another live session holds this seat')}</div>` : '';
       const events = lastEvents(l.name, 5)
         .map((e) => `<div class="ev">${esc(e)}</div>`)
         .join('');
       return `<tr>
         <td class="name">${actor(l.name)}</td>
-        <td class="st st-${st}">${st}${blocked}${wedged}${idle}</td>
+        <td class="st st-${st}">${st}${blocked}${wedged}${idle}${seatHeld}</td>
         <td>${esc(l.workstream)}</td>
         <td>${esc(l.runtime)}/${esc(l.model)}</td>
         <td>${esc(sGet(l.name, 'PACE')?.trim() ?? '1')}</td>
@@ -208,7 +211,7 @@ ${ESTATE_TOKENS}
        frame is currentColor, so a seat is whatever ink its row gives it. */
     .mark { width: 1.15em; height: 1.15em; vertical-align: -0.22em; margin-right: 4px; }
     .st { font-weight: 600; }
-    .st-RUNNING { color: var(--good-text); } .st-IDLE { color: var(--ink-3); } .st-BLOCKED, .st-CRASHED, .st-WEDGED { color: var(--critical); }
+    .st-RUNNING { color: var(--good-text); } .st-IDLE, .st-SEAT_HELD { color: var(--ink-3); } .st-BLOCKED, .st-CRASHED, .st-WEDGED { color: var(--critical); }
     .st-LIMIT, .st-PARKED, .st-BACKOFF { color: var(--warn-text); } .st-STOP, .st-HOLD { color: var(--ink-3); }
     .st-halted { color: var(--ink-3); }
     .trace { font-family: ui-monospace, monospace; font-size: 11px; color: var(--ink-2); }

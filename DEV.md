@@ -46,7 +46,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   on its second (H-954): either no executable work exists in the seat's scope,
   held work is non-executable, or a session left executable work untouched.
   The view and `/health.json` expose that reason; it stays local so observing a
-  wait cannot create Helmo motion and wake the same seat again. After
+  wait cannot create Helmo motion and wake the same seat again. A SEAT_HELD
+  sentinel makes the same-seat guard visible while the loop stands down for
+  another live session; the view, health feed, and CLI show the hold instead
+  of calling it a running iteration, and the marker clears with the hold. After
   each iteration it writes the session's metered spend back to the
   most-touched ticket via session-filtered helm-cli event queries and
   `record-spend` (H-19, H-878), so desk writes under the same actor name cannot

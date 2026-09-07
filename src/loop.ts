@@ -78,10 +78,11 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     throw new Error(`A '${l.name}' loop is already running (PID ${existing}). Check: rev status`);
   }
   sSet(l.name, 'RUNNING', runningStamp());
+  sClear(l.name, 'SEAT_HELD');
   if (!sHas(l.name, 'PACE') && l.pace < 1) sSet(l.name, 'PACE', String(l.pace));
   // Burn-breaker window floor: this process's start (H-412).
   markBurnFloor(l.name);
-  const cleanup = () => sClear(l.name, 'RUNNING', 'PARKED', 'LIMIT');
+  const cleanup = () => sClear(l.name, 'RUNNING', 'PARKED', 'SEAT_HELD', 'LIMIT');
   process.on('exit', cleanup);
   process.on('SIGINT', () => process.exit(130));
   process.on('SIGTERM', () => process.exit(143));
@@ -192,6 +193,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       }));
       const seat = seatDecide({ holds, seat: seatId(l), staleSeconds: g.seat_stale_seconds });
       if (seat.act === 'stand_down') {
+        sSet(l.name, 'SEAT_HELD', seat.reason);
         if (!seatHeld) {
           seatHeld = true;
           logEvent(l.name, 'seat-held', seat.reason);
@@ -202,9 +204,14 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       }
       if (seatHeld) {
         seatHeld = false;
+        sClear(l.name, 'SEAT_HELD');
         logEvent(l.name, 'seat-clear');
       }
     } catch (e) {
+      if (seatHeld) {
+        seatHeld = false;
+        sClear(l.name, 'SEAT_HELD');
+      }
       logEvent(l.name, 'seat-check-failed', String(e).slice(0, 200));
     }
     i += 1;
