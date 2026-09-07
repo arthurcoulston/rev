@@ -48,7 +48,14 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   loop files iteration-sized children and closes the parent as a plan in the
   same pass, instead of carrying one ticket across repeated iterations
   (H-1057). The sentence sits after the two draw variants so neither scope can
-  omit it.
+  omit it. Both prompts also require every considered ready ticket to receive a
+  recorded disposition rather than remain invisibly declined (H-1071). For a
+  scoped seat, Rev snapshots ready IDs around each clean, unproductive pass and
+  keeps a per-ticket streak in `.silent_decline_streaks.json`; the third pass
+  creates one deduplicated human escalation and quarantines those tickets with
+  `needs_human`, without halting the rest of the seat. Any advancing work, or a
+  ticket leaving the ready set, resets its streak. Store-wide `'*'` loops are
+  excluded: their job is judgment, and a recorded disposition is the action.
   An IDLE sentinel keeps the wake cursor on its first line and a bounded reason
   on its second (H-954): either no executable work exists in the seat's scope,
   held work is non-executable, or a session left executable work untouched.

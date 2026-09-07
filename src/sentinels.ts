@@ -60,6 +60,17 @@ export function streakReset(loop: string, ...names: string[]): void {
   for (const name of names) rmSync(join(stateDir(loop), `.${name}_streak`), { force: true });
 }
 
+export function streakMap(loop: string, name: string): Record<string, number> {
+  const p = join(stateDir(loop), `.${name}_streaks.json`);
+  try { return JSON.parse(readFileSync(p, 'utf8')) as Record<string, number>; } catch { return {}; }
+}
+
+export function streakMapSet(loop: string, name: string, values: Record<string, number>): void {
+  const p = join(stateDir(loop), `.${name}_streaks.json`);
+  if (Object.keys(values).length === 0) rmSync(p, { force: true });
+  else writeFileSync(p, `${JSON.stringify(values)}\n`);
+}
+
 // Structured operational trace — the watch officer's and dashboard's perception
 // surface. One timestamped line per launcher decision; append-only, best-effort.
 export function logEvent(loop: string, event: string, fields = ''): void {

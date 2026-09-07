@@ -57,6 +57,18 @@ export function wakeDecide(c: {
   return c.changedSince || (c.firstPoll && c.workstream !== '*' && c.readyCount > 0);
 }
 
+export function declineDecide(
+  previous: Record<string, number>,
+  unchangedReadyIds: string[],
+  produced: boolean,
+  cap = 3,
+): { streaks: Record<string, number>; escalate: string[] } {
+  if (produced) return { streaks: {}, escalate: [] };
+  const streaks: Record<string, number> = {};
+  for (const id of [...new Set(unchangedReadyIds)].sort()) streaks[id] = (previous[id] ?? 0) + 1;
+  return { streaks, escalate: Object.keys(streaks).filter((id) => streaks[id]! >= cap) };
+}
+
 // Same-seat guard (H-558): two live sessions sharing one crew name (a rev loop
 // and a desk session or subagent) collided twice, each working over the
 // other's in-flight tickets. Before spending an iteration, the loop asks who

@@ -659,6 +659,49 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
     // Triage duty still outranks idling: the carve-out must survive rewording.
     expect(out).toContain('question only the human can answer');
     expect(out).toContain('file children that each fit one iteration and close the parent as a plan');
+    expect(out).toContain('Never leave ready work as found');
+    expect(out).toContain('prevent that unchanged ticket waking it again');
+  });
+
+  it('quarantines a ticket after three silent declines and deduplicates the escalation (H-1071)', () => {
+    const e = setup(`[loops.decline-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = 'echo no-disposition'
+`);
+    const id = seedTicket(e, 'Silently declined work');
+    for (let n = 0; n < 3; n += 1) rev(e, ['run', 'decline-loop', '--count', '1']);
+    let ticket = helm(e, ['get', id]) as { needs_human: boolean };
+    expect(ticket.needs_human).toBe(true);
+    let escalations = (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: { title: string }[] }).tickets;
+    expect(escalations.filter((t) => t.title.includes('silently declined')).length).toBe(1);
+    const events = readFileSync(join(e.home, 'state', 'decline-loop', 'events.log'), 'utf8');
+    expect(events).toMatch(new RegExp(`silent-decline\\s+tickets=${id} streaks=${id}:1`));
+    expect(events).toMatch(/silent-decline-escalated/);
+
+    helm(e, ['update', '--ticket', id, '--note', 'release for replay proof', '--no-needs-human']);
+    rev(e, ['run', 'decline-loop', '--count', '1']);
+    ticket = helm(e, ['get', id]) as { needs_human: boolean };
+    expect(ticket.needs_human).toBe(true);
+    escalations = (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: { title: string }[] }).tickets;
+    expect(escalations.filter((t) => t.title.includes('silently declined')).length).toBe(1);
+  });
+
+  it('a real disposition resets silent-decline tracking (H-1071)', () => {
+    const e = setup(`[loops.disposition-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+node ${HELM_CLI} update --ticket $ID --note "requires a human sitting" --needs-human
+'''
+`);
+    seedTicket(e, 'Disposed work');
+    rev(e, ['run', 'disposition-loop', '--count', '1']);
+    const events = readFileSync(join(e.home, 'state', 'disposition-loop', 'events.log'), 'utf8');
+    expect(events).not.toMatch(/silent-decline\s/);
   });
 
   it('evidence-only update counts as production — why the idle instruction has to exist (H-740)', () => {
@@ -707,6 +750,8 @@ fi
     expect(out).toContain("PROMPT:This is a Rev loop iteration, not a summon; AGENTS.md's summon clause does not apply; the queue is the work.");
     expect(out).toContain('across all workstreams'); // the wildcard prompt, not a stream's
     expect(out).toContain('file children that each fit one iteration and close the parent as a plan');
+    expect(out).toContain('Never leave ready work as found');
+    expect(out).toContain('For this store-wide sweep, a disposition note is action');
     expect((helm(e, ['get', id]) as { status: string }).status).toBe('done');
     expect(existsSync(join(e.home, 'state', 'judge', 'IDLE'))).toBe(true);
   });

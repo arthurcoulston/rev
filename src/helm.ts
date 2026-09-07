@@ -13,6 +13,15 @@ export interface WakeCheck {
   changed_since: boolean;
 }
 
+export function readyTicketIds(g: GlobalConfig, l: LoopConfig): string[] {
+  if (l.workstream === '*') return [];
+  const list = (args: string[]) => (run(g, ['list', '--ready', ...args, '--limit', '100'], loopActor(l)) as { tickets: { id: string }[] }).tickets;
+  return [...new Set([
+    ...list(['--workstream', l.workstream]),
+    ...list(['--assignee', l.name]),
+  ].map((t) => t.id))];
+}
+
 export interface WorkstreamInfo {
   name: string;
   goal: string | null;
@@ -264,4 +273,21 @@ export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, 
     revActor(),
   );
   return created.id;
+}
+
+const silentDeclineTitle = (l: LoopConfig) => `Loop '${l.name}' silently declined ready work three times`;
+
+export function escalateSilentDeclines(g: GlobalConfig, l: LoopConfig, ids: string[]): string {
+  let standing: string | null = null;
+  for (const status of ['awaiting_human', 'open', 'in_progress']) {
+    const rows = run(g, ['list', '--workstream', g.escalation_workstream, '--status', status, '--limit', '100']) as { tickets: { id: string; title: string }[] };
+    standing = rows.tickets.find((t) => t.title === silentDeclineTitle(l))?.id ?? null;
+    if (standing) break;
+  }
+  if (!standing) {
+    standing = (run(g, ['create', '--title', silentDeclineTitle(l), '--body', `Rev observed three consecutive passes in which loop '${l.name}' left these ready tickets unchanged: ${ids.join(', ')}. The tickets are quarantined for a human sitting; the seat continues running.`, '--workstream', g.escalation_workstream, '--type', 'ops', '--priority', '1'], revActor()) as { id: string }).id;
+    run(g, ['return', '--ticket', standing, '--situation', `Loop '${l.name}' left ready tickets ${ids.join(', ')} unchanged for three consecutive passes. Rev quarantined them instead of halting the seat.`, '--question', 'Should these tickets be rerouted, clarified, or released back to the seat?', '--recommendation', 'inspect the named tickets and the loop trace, then release only those whose next action is explicit', '--if-unanswered', 'The named tickets remain withheld from agent queues; the rest of the seat continues running.'], revActor());
+  }
+  for (const id of ids) run(g, ['update', '--ticket', id, '--note', `Rev quarantined this ticket after loop '${l.name}' left it ready and unchanged for three consecutive passes; escalation ${standing}.`, '--needs-human'], revActor());
+  return standing;
 }

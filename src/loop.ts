@@ -2,13 +2,13 @@
 // the outcome through the ladder, idle or halt. v0 runs one loop in the
 // foreground; the multi-loop supervisor is the next milestone.
 import { stateDir } from './config.js';
-import { WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, openEscalation, recordSpend, scopeLabel, seatHolds, seatId, seatStreams, wakeCheck, workstreamInfo } from './helm.js';
+import { WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, openEscalation, readyTicketIds, recordSpend, scopeLabel, seatHolds, seatId, seatStreams, wakeCheck, workstreamInfo } from './helm.js';
 import { burnWindow, markBurnFloor } from './burn.js';
 import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageForModel } from './usage.js';
 import { choiceExhausted, selectRun } from './routing.js';
 import { raiseWedgeAlarm, wedgeDecide } from './health.js';
-import { breakerDecide, ladderDecide, limitDecide, probeDecide, rollingMean, seatDecide, velocityToPause, wakeDecide } from './ladder.js';
-import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streak, streakReset } from './sentinels.js';
+import { breakerDecide, declineDecide, ladderDecide, limitDecide, probeDecide, rollingMean, seatDecide, velocityToPause, wakeDecide } from './ladder.js';
+import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streak, streakMap, streakMapSet, streakReset } from './sentinels.js';
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig, RunChoice } from './types.js';
@@ -285,6 +285,11 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         : `Use your Helm tools: first list tickets assigned to you, then ready work in workstream '${l.workstream}'. A ticket reserved for you is yours to work whatever its workstream. If nothing in EITHER list is workable — both are empty, or every ticket is blocked, time-gated, or already sitting with the human — end the session WITHOUT filing a ticket or writing a note: producing nothing is the idle signal this loop reads, and recording the no-change finding re-certifies you as busy and buys another full-price pass, evidence attached or not (H-545, H-740). The one exception is a question only the human can answer that is not already pending — return that once, then stop. Otherwise work ONE ticket to a natural stopping point, `;
     const split =
       `If the ticket you pick will not reach a natural stopping point this pass, split it now: file children that each fit one iteration and close the parent as a plan with those children as evidence. `;
+    const disposition =
+      `Never leave ready work as found: record why and act — link its blocker, hand it to the right seat, return it or mark needs_human, set a genuine start date, or cancel with reason. ` +
+      (l.workstream === '*'
+        ? `For this store-wide sweep, a disposition note is action. `
+        : `For a scoped seat, prevent that unchanged ticket waking it again. `);
     // Deploying a fix the crew has already committed and tested is the crew's
     // call, not a question for the operator (Arthur, H-1046) — and the bar the
     // draw sets for returning to the human is exactly where a loop decides to
@@ -298,9 +303,14 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       steering +
       draw +
       split +
+      disposition +
       `record progress honestly, then end the session. ` +
       deploy +
       `${l.prompt ?? ''}`;
+    let readyBefore: string[] | null = null;
+    if (l.workstream !== '*') {
+      try { readyBefore = readyTicketIds(g, l); } catch (e) { logEvent(l.name, 'decline-check-failed', `before ${String(e).slice(0, 160)}`); }
+    }
     const res = runSession(g, l, prompt, model, run);
 
     const durSec = Math.round((Date.now() - started) / 1000);
@@ -323,6 +333,29 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       limitWait: g.limit_wait_seconds,
     });
     logEvent(l.name, 'run-end', `iter=${i} rc=${res.rc} class=${res.cls} produced=${produced} dur=${durSec}s action=${action.act}`);
+
+    if (l.workstream !== '*' && res.cls === 'ok') {
+      try {
+        if (produced) {
+          streakMapSet(l.name, 'silent_decline', {});
+        } else if (readyBefore !== null) {
+          const afterIds = readyTicketIds(g, l);
+          const unchanged = readyBefore.filter((id) => afterIds.includes(id));
+          const decline = declineDecide(streakMap(l.name, 'silent_decline'), unchanged, false);
+          streakMapSet(l.name, 'silent_decline', decline.streaks);
+          if (unchanged.length) {
+            logEvent(l.name, 'silent-decline', `tickets=${unchanged.join(',')} streaks=${unchanged.map((id) => `${id}:${decline.streaks[id]}`).join(',')}`);
+            console.log(`rev: '${l.name}' left ready work unchanged: ${unchanged.join(', ')}.`);
+          }
+          if (decline.escalate.length) {
+            const id = escalateSilentDeclines(g, l, decline.escalate);
+            logEvent(l.name, 'silent-decline-escalated', `ticket=${id} work=${decline.escalate.join(',')}`);
+          }
+        }
+      } catch (e) {
+        logEvent(l.name, 'decline-check-failed', `after ${String(e).slice(0, 160)}`);
+      }
+    }
 
     // Write metered spend back to the ticket(s) this iteration touched (H-19).
     // Whole session charged to the most-touched ticket — finer attribution
