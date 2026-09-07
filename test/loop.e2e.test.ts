@@ -182,7 +182,8 @@ fi
     // the standing ticket the mock keeps declining is not motion (H-426), so
     // the loop polls quietly until the test observes a completed post-idle
     // wake-check and stops it. Startup and idle classification make the first
-    // two checks; the third is the gate decision this regression protects.
+    // two checks; reaching the fourth proves Rev consumed the third check and
+    // completed the gate decision this regression protects.
     const eventsPath = join(dir, 'events.log');
     const child = spawn('npx', ['tsx', REV_CLI, 'run', 'note-loop', '--count', '2'], {
       env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
@@ -193,7 +194,7 @@ fi
       while (!(/run-end.*iter=1.*produced=false.*action=idle/.test(readFileSync(eventsPath, 'utf8'))
         && existsSync(join(dir, 'IDLE'))
         && existsSync(polled)
-        && readFileSync(polled, 'utf8').trim().split('\n').length >= 3)) {
+        && readFileSync(polled, 'utf8').trim().split('\n').length >= 4)) {
         if (Date.now() >= deadline) throw new Error('timed out waiting for note-loop to idle');
         await new Promise((r) => setTimeout(r, 25));
       }
