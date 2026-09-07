@@ -84,8 +84,6 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   markBurnFloor(l.name);
   const cleanup = () => sClear(l.name, 'RUNNING', 'PARKED', 'SEAT_HELD', 'LIMIT');
   process.on('exit', cleanup);
-  process.on('SIGINT', () => process.exit(130));
-  process.on('SIGTERM', () => process.exit(143));
 
   const cycle = l.choices.map((c) => `${c.provider}/${c.model}`).join(' ⇄ ');
   console.log(`rev: loop '${l.name}' | ${scopeLabel(l)} | ${cycle} | cwd ${l.cwd}`);
@@ -99,7 +97,31 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   let seatHeld = false; // same-seat guard episode flag: log once per hold, not per poll (H-558)
   const lineage = ancestryStamp();
 
+  // The drain's last step. A signal arriving mid-iteration cannot be delivered
+  // until the event loop turns (see the yield below), so by the time this runs
+  // the iteration it interrupted has finished — say so in the loop's own log,
+  // which otherwise records nothing at all about why the process ended.
+  const stopOnSignal = (code: number, reason: string) => () => {
+    logEvent(l.name, 'loop-stop', `reason=${reason} runs=${i}`);
+    process.exit(code);
+  };
+  process.on('SIGINT', stopOnSignal(130, 'SIGINT'));
+  process.on('SIGTERM', stopOnSignal(143, 'drain'));
+
   while (true) {
+    // One turn of the event loop, and the reason it has to be here (H-1109).
+    // The shim runs a session with spawnSync, so a SIGTERM that arrives during
+    // an iteration is held until something yields to libuv — and on the
+    // continue path back to here, nothing does: every await between run-end
+    // and the next run-start resolves synchronously, which drains microtasks
+    // without ever letting the signal watcher fire. So the drain was not
+    // deferred to the iteration boundary, as the supervisor's cascade
+    // documents; it was swallowed. On 2026-09-07 six loops exited in
+    // milliseconds while mason ran three more full-price iterations on the old
+    // code and held the whole fleet down for ten minutes. The halt sentinels
+    // below already promise that an operator signal between iterations always
+    // wins; this is what makes that true for signals as well as files.
+    await new Promise((r) => setImmediate(r));
     // Orphan watchdog (H-281): a broken ancestor chain is the one unforgeable
     // sign nobody who started this loop is still watching it — a SIGKILLed
     // supervisor, or a dead shell above a surviving tsx wrapper (the

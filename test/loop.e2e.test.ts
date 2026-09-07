@@ -426,6 +426,64 @@ mock_cmd = "true"
     }
   });
 
+  it('a drain that lands mid-iteration stops the loop at the boundary instead of starting another (H-1109)', async () => {
+    // The shim runs a session with spawnSync, so the supervisor's drain
+    // SIGTERM cannot be delivered while an iteration is in flight. Mid-flight
+    // is the only interesting moment: the iteration must be allowed to finish
+    // its close-out, and then the loop must stop — with more ready work still
+    // waiting, which is exactly what used to pull it into another full-price
+    // session on the code the redeploy was replacing.
+    const e = setup(`[loops.drain-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+idle_floor_s = 0
+mock_cmd = '''
+set -e
+sleep 2
+ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -n "$ID" ]; then
+  node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
+  node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --evidence-kind other --evidence-ref mock
+fi
+'''
+`);
+    const ids = [seedTicket(e, 'The piece the drained iteration is working'), seedTicket(e, 'Work still ready when the drain lands')];
+
+    const dir = join(e.home, 'state', 'drain-loop');
+    const events = () => (existsSync(join(dir, 'events.log')) ? readFileSync(join(dir, 'events.log'), 'utf8') : '');
+    const until = async (re: RegExp, what: string) => {
+      const deadline = Date.now() + 25_000;
+      while (!re.test(events())) {
+        if (Date.now() >= deadline) throw new Error(`timed out waiting for ${what}; saw:\n${events()}`);
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    };
+    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'drain-loop'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
+    });
+    try {
+      await until(/run-start.*iter=1/, 'the first iteration to start');
+      // Signal the loop process by the pid it records: the tsx wrapper above
+      // it is not the process holding the drain.
+      process.kill(parseInt(/loop-start\s+pid=(\d+)/.exec(events())![1]!, 10), 'SIGTERM');
+
+      await until(/loop-stop\s+reason=drain/, 'the drain to be honoured');
+      const log = events();
+      // The courtesy the supervisor's cascade extends: the interrupted
+      // iteration finished and closed out before the loop went.
+      expect(log).toMatch(/run-end.*iter=1/);
+      expect(log.indexOf('run-end')).toBeLessThan(log.indexOf('reason=drain'));
+      // And the failure itself: no second session on the old code.
+      expect(log).not.toMatch(/run-start.*iter=2/);
+      // Ready work was there to pull it into one, so the silence above is a
+      // decision and not an empty queue.
+      expect(ids.map((id) => (helm(e, ['get', id]) as { status: string }).status)).toContain('open');
+    } finally {
+      child.kill('SIGKILL');
+    }
+  });
+
   it('an empty-handed iteration runs on the probe model; one with work in reach does not (H-412)', () => {
     // Iteration 1 has a ready ticket: working model. The mock claims and
     // closes it, so iteration 2 finds nothing ready and nothing held — the

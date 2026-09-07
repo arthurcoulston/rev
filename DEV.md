@@ -191,9 +191,19 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   blocking `spawnSync`, so its handler cannot run until the session returns —
   the deferral is real, and everything the loop does after a session (run-end,
   the ladder, `record-spend`) is synchronous, so it completes before the
-  handler's first chance to fire. What that deferral never covered is a signal
-  aimed at the process GROUP rather than the loop, which is where H-467's
-  orphaned artifacts came from: see the session process group under `shim.ts`.
+  handler's first chance to fire. That synchronous stretch used to run straight
+  past the iteration boundary and into the NEXT session (H-1109): `await` on an
+  already-resolved promise drains microtasks without turning libuv, so the
+  signal watcher never got its turn and a busy loop swallowed the drain
+  outright — six loops gone in milliseconds while mason ran three more
+  full-price iterations on the old code and held the fleet down for ten
+  minutes. `loop.ts` yields once (`setImmediate`) at the top of every
+  iteration, which is the only thing making the deferral end where it is
+  documented to end, and the handler logs `loop-stop reason=drain` so the
+  loop's own events.log says why it went. What that deferral never covered is
+  a signal aimed at the process GROUP rather than the loop, which is where
+  H-467's orphaned artifacts came from: see the session process group under
+  `shim.ts`.
   Child stdout/err goes to state/<loop>/console.log; supervisor decisions to
   state/supervisor/events.log. 'supervisor' is a reserved loop name.
 - `redeploy.ts` — activating rev's own committed, tested fix (H-1046). A loop
