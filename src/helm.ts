@@ -51,8 +51,11 @@ export function seatId(l: LoopConfig): string {
 
 // The actor's model field is the model actually running the session — a probe
 // iteration on the small tier must not sign the record as the working model.
-export function loopActor(l: LoopConfig, model?: string): object {
-  return { name: l.name, kind: 'agent', model: model ?? l.model, version: l.version, session: seatId(l) };
+// A session override is for a consumer that is NOT the loop: a meeting room
+// runs the seat's composed session but must not sign as `rev:<seat>`, or the
+// seat guard above reads a meeting's write as the loop's own hold (H-1152).
+export function loopActor(l: LoopConfig, model?: string, session?: string): object {
+  return { name: l.name, kind: 'agent', model: model ?? l.model, version: l.version, session: session ?? seatId(l) };
 }
 
 export interface SeatHold {

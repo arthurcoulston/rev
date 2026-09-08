@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { codexArgs, codexMcpArg, notionalCost, parseCodexEvents, runSession, sessionEnv, tomlString } from '../src/shim.js';
+import { codexArgs, codexMcpArg, notionalCost, parseCodexEvents, runSession, sessionEnv, sessionSpec, systemPrompt, tomlString } from '../src/shim.js';
 import type { GlobalConfig, LoopConfig } from '../src/types.js';
 import { parse } from 'smol-toml';
 import { execFileSync, spawn } from 'node:child_process';
@@ -201,5 +201,70 @@ describe('session git identity (H-787)', () => {
     expect(ce).toBe('mason@crew.local');
     expect(an).toBe('Example Operator');
     expect(ae).toBe('operator@example.test');
+  });
+});
+
+// H-1152: a meeting IS the seat's loop session with a different entry, so the
+// composition has to be one thing rev exports rather than two that drift.
+// These assert the parts a second consumer depends on and could not see.
+describe('sessionSpec (H-1152)', () => {
+  const g = { helmo_mcp_server: '/tmp/helmo-server.js' } as GlobalConfig;
+  const scratch = mkdtempSync(join(tmpdir(), 'rev-spec-'));
+  const constitution = join(scratch, 'PROFILE.md');
+  const skill = join(scratch, 'skill.md');
+  writeFileSync(constitution, 'I am mason.');
+  writeFileSync(skill, 'How to publish.');
+  const loop = {
+    name: 'mason', runtime: 'claude', model: 'claude-opus-5', version: '0.6',
+    cwd: '/tmp/crew', constitution, skills: [skill],
+  } as LoopConfig;
+
+  it('carries the same system prompt the loop spawn writes to its system file', () => {
+    expect(sessionSpec(g, loop).system_prompt).toBe(systemPrompt(loop));
+  });
+
+  it('carries the roster MCP surface with the seat as the Helm actor', () => {
+    const spec = sessionSpec(g, loop, { model: 'claude-fable-5-1' });
+    expect(spec.mcp_servers['helmo']!['args']).toEqual(['/tmp/helmo-server.js']);
+    const actor = JSON.parse((spec.mcp_servers['helmo']!['env'] as Record<string, string>)['HELMO_ACTOR']!);
+    expect(actor).toMatchObject({ name: 'mason', kind: 'agent', model: 'claude-fable-5-1', version: '0.6' });
+    expect(spec.model).toBe('claude-fable-5-1');
+  });
+
+  // The stamp is how seatDecide tells a live loop's own hold from a foreign
+  // one (H-558). A meeting wearing `rev:mason` would stand the mason loop down
+  // against itself, so the override has to reach the actor the server sees —
+  // not just the copy printed for the reader.
+  it('a session override reaches the Helm server env, not only the readable actor', () => {
+    const spec = sessionSpec(g, loop, { session: 'meeting:thread-7' });
+    const actor = JSON.parse((spec.mcp_servers['helmo']!['env'] as Record<string, string>)['HELMO_ACTOR']!);
+    expect(actor.session).toBe('meeting:thread-7');
+    expect(spec.actor).toMatchObject({ session: 'meeting:thread-7' });
+    expect(sessionSpec(g, loop).actor).toMatchObject({ session: 'rev:mason' });
+  });
+
+  // A spec is printed to stdout. sessionEnv() copies this process's whole
+  // environment, so exporting it would publish the fleet's secrets; the export
+  // carries the RULE (env_strip) and the overrides, and nothing of the caller.
+  it('exports what rev sets and none of the caller environment', () => {
+    process.env['REV_SPEC_FIXTURE_SECRET'] = 'do-not-export';
+    try {
+      const spec = sessionSpec(g, loop);
+      expect(spec.env).toEqual({
+        GIT_COMMITTER_NAME: 'mason',
+        GIT_COMMITTER_EMAIL: 'mason@crew.local',
+        REV_LOOP: 'mason',
+        REV_CLI: process.argv[1] ?? '',
+      });
+      expect(JSON.stringify(spec)).not.toContain('do-not-export');
+      expect(new RegExp(spec.env_strip).test('ANTHROPIC_API_KEY')).toBe(true);
+      expect(new RegExp(spec.env_strip).test('PATH')).toBe(false);
+    } finally {
+      delete process.env['REV_SPEC_FIXTURE_SECRET'];
+    }
+  });
+
+  it('declares the flags a loop actually runs with', () => {
+    expect(sessionSpec(g, loop).flags).toEqual({ strict_mcp_config: true, dangerously_skip_permissions: true });
   });
 });

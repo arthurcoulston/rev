@@ -97,7 +97,7 @@ function parseProviders(raw: Record<string, unknown>): Record<string, ProviderCo
  *  The tier after the colon must exist in that provider's models table;
  *  probe_tier resolves against the same table so a rotation's probe always
  *  runs on the provider actually being probed. */
-function resolveRef(
+export function resolveRef(
   ref: string, providers: Record<string, ProviderConfig>, defaults: { tier?: string; probe_tier?: string }, where: string,
 ): RunChoice {
   const [name, tier = defaults.tier] = ref.split(':', 2);

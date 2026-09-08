@@ -123,7 +123,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 - `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent
   CLAUDE/ANTHROPIC/CODEX env — the auth-leak fix; don't weaken it) and
-  `sessionEnv()` over it (the seat's git committer identity, H-787), the session
+  `sessionEnv()` over it (the seat's git committer identity, H-787 — the
+  variables rev SETS are `sessionEnvOverrides()`, separable because a spec
+  printed to stdout must never carry the caller's own environment), the session
   **process group**, per-session
   token metering, transient-API detection, and the strict MCP surface (sessions
   see ONLY Helmo + the loop's `mcp_extra`; only the Helmo server is handed the
@@ -164,6 +166,18 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   deliberately unreachable when the loop dies during `spawnSync`, so H-467's
   orphaned session still finishes. `test/shim.test.ts` proves both sides with
   real process groups.
+
+  **`sessionSpec()` is that composition as data** (H-1152), so a consumer that
+  is not a loop can run a seat's session without a second copy of the recipe.
+  Its one caller today is the Meetings room, where Arthur types instead of the
+  queue: same cwd, same skills, same Helm surface, same model routing. Two
+  things it does NOT do the way a loop does. The exported `env` is
+  `sessionEnvOverrides()` only, plus `env_strip` as the rule for the rest — a
+  spec goes to stdout, and `sessionEnv()` copies the fleet's whole environment.
+  And the actor's session stamp is a required argument, never defaulted:
+  `rev:<seat>` is the seat stamp `seatDecide` reads (H-558), so a consumer that
+  signed by omission would make its Helm writes read as the loop's own hold.
+  Ward's H-1151 ruling names the meeting form: `meeting:<thread id>`.
 
   **The one place that cost is not paid is the supervisor's drain escalation**
   (H-1089). A redeploy drains; a loop mid-iteration defers its SIGTERM past
@@ -288,6 +302,14 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   will drain and stay down.
 - Dashboard: `node dist/view.js` (`REV_VIEW_PORT`, default 4500; binds
   127.0.0.1, `REV_VIEW_HOST` to change) — restart after rebuild.
+- What a seat's session is made of, as JSON, without running one:
+  `node dist/cli.js session-spec <seat> --session <actor stamp> [--provider
+  claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]`.
+  Reads state, writes none. `--session` is required (see `shim.ts` above), and
+  a tier resolves through the roster's providers table — a meeting can ask for
+  `claude:high` while the seat's loop runs codex/frontier. A seat with no
+  roster loop is composable by supplying `--cwd` and `--constitution`, the two
+  facts rev has no business knowing; the spec then says `in_roster: false`.
 
 ## The estate design tokens (R-11 H-714)
 
@@ -631,5 +653,8 @@ Helmo is the work record and must be built separately; runtime rosters point at
 its `dist/cli.js` and `dist/server.js`, while integration tests use the built
 checkout named by `REV_TEST_HELMO` (falling back to sibling `../helmo`). Loop
 identities and constitutions live outside this repository and are referenced by
-the instance roster. In a larger estate, its own project map owns the remaining
-cross-project context.
+the instance roster. Meetings (`~/projects/meetings`, R-31) is a consumer, not a
+dependency: it shells out to `session-spec` to run a seat's session under a
+human's typing instead of the queue, so a change to what a loop session carries
+changes what a meeting carries too — which is the point. In a larger estate, its
+own project map owns the remaining cross-project context.

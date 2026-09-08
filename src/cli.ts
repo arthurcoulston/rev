@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // rev — run and control loops. Control verbs are sentinel writes; anything
 // that reads state is safe from any context (the watch officer uses these).
-import { existsSync } from 'node:fs';
-import { loadRoster, stateDir } from './config.js';
+import { existsSync, statSync } from 'node:fs';
+import { loadRoster, resolveRef, stateDir } from './config.js';
+import { sessionSpec } from './shim.js';
+import { LoopConfig } from './types.js';
 import { pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageLine, usagePath } from './usage.js';
 import { selectRun } from './routing.js';
 import { runLoop } from './loop.js';
@@ -24,6 +26,7 @@ const COMMAND_HELP: Record<string, string> = {
   routing: 'usage: rev routing',
   status: 'usage: rev status',
   tail: 'usage: rev tail <loop>',
+  'session-spec': 'usage: rev session-spec <seat> --session <actor stamp> [--provider claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]',
 };
 
 if (cmd === '--help' || cmd === '-h') {
@@ -52,7 +55,7 @@ function flag(name: string): string | undefined {
   return i === -1 ? undefined : rest[i + 1];
 }
 
-const { global: g, loops } = loadRoster();
+const { global: g, loops, providers } = loadRoster();
 
 function knownLoop(name: string): string {
   if (!loops[name]) {
@@ -251,6 +254,72 @@ switch (cmd) {
     console.log(`${stateDir(name)}/events.log`);
     break;
   }
+  // The composed session as JSON, for a consumer that runs a seat's session
+  // without being a loop — the Meetings room, where Arthur types instead of
+  // the queue (H-1152). Read-only: it prints what a run WOULD carry and
+  // touches no state. A seat with no roster loop is composable by supplying
+  // the two facts only the caller knows, so Rev never learns crew paths.
+  case 'session-spec': {
+    const name = rest[0];
+    if (!name || name.startsWith('--')) {
+      console.error(COMMAND_HELP['session-spec']);
+      process.exit(1);
+    }
+    // The seat stamp is required, never defaulted. Everyone asking for a spec
+    // is by definition NOT the loop — the loop calls runSession directly — and
+    // a consumer that silently signed as `rev:<seat>` would make its Helm
+    // writes read as the loop's own seat hold (H-558). Ward's H-1151 condition:
+    // a meeting signs `meeting:<thread id>`.
+    const session = flag('session');
+    if (!session) {
+      console.error(
+        'session-spec needs --session: the Helm actor stamp this consumer writes under, e.g. --session meeting:<thread id>. ' +
+        "Pass --session rev:<seat> only if you ARE that seat's loop.",
+      );
+      process.exit(1);
+    }
+    const base = loops[name];
+    const cwd = flag('cwd') ?? base?.cwd;
+    const constitution = flag('constitution') ?? base?.constitution;
+    if (!cwd || !constitution) {
+      console.error(
+        `'${name}' is not a roster loop (roster has: ${Object.keys(loops).join(', ') || 'none'}) — a seat with no loop needs --cwd and --constitution.`,
+      );
+      process.exit(1);
+    }
+    // Same fail-closed rule runSession applies: never describe a session that
+    // would start half-instructed.
+    if (!existsSync(constitution) || statSync(constitution).size === 0) {
+      console.error(`constitution missing or empty: ${constitution}`);
+      process.exit(1);
+    }
+    // A meeting asks for a tier, not the loop's own choice: mason's loop runs
+    // codex/frontier, and the room wants claude/high (H-1152).
+    const tier = flag('tier');
+    const provider = flag('provider') ?? 'claude';
+    let runtime = base?.runtime ?? 'claude';
+    let model = flag('model') ?? base?.model;
+    if (tier) {
+      const choice = resolveRef(`${provider}:${tier}`, providers, {}, 'rev session-spec');
+      runtime = choice.runtime;
+      if (!flag('model')) model = choice.model;
+    }
+    if (!model) {
+      console.error(`'${name}' has no roster model — name one with --model, or a --tier to resolve from [providers.${provider}.models].`);
+      process.exit(1);
+    }
+    const l: LoopConfig = {
+      ...(base ?? { name, workstream: '', pace: 1, idle_floor_s: 0, choices: [], fallbacks: [] }),
+      name,
+      cwd,
+      constitution,
+      runtime,
+      model,
+      version: flag('version') ?? base?.version ?? '0.1',
+    } as LoopConfig;
+    console.log(JSON.stringify(sessionSpec(g, l, { model, session, in_roster: Boolean(base) }), null, 2));
+    break;
+  }
   default:
     console.error(`usage: rev <command>
   run                      start the machine: supervise every roster loop (respawn, backoff, drain)
@@ -262,6 +331,7 @@ switch (cmd) {
   usage [--poll]           Max plan usage bars (session, weekly, per-model)
   routing                  preview working-model choices from current usage (no runs)
   status                   supervisor + every loop's state at a glance
+  session-spec <seat>      the composed session as JSON (model, cwd, skills, MCP, env) — reads nothing else
   service <verb>           install|uninstall|start|status — survive reboots (launchd/systemd)
   redeploy [--ticket <id>] [--reason "<why>"]
                            activate a committed fix: drain after in-flight iterations, come back on the new code

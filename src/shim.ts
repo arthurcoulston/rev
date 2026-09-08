@@ -9,16 +9,18 @@ import { join } from 'node:path';
 import { tokenLogPath } from './config.js';
 import { recordCodexUsage } from './usage.js';
 import { loopActor } from './helm.js';
-import { GlobalConfig, LoopConfig, ModelPrice, RunChoice, SessionResult } from './types.js';
+import { GlobalConfig, LoopConfig, ModelPrice, RunChoice, Runtime, SessionResult } from './types.js';
 
 // Loop sessions get a clean environment: ambient agent-session variables
 // (a parent Claude/Codex session's proxy URLs, session ids, auth-refresh
 // hints) must never leak into a spawned runtime — a child inheriting a
 // parent session's ANTHROPIC_BASE_URL without its auth reads as logged-out.
+export const AMBIENT_SESSION_ENV = /^(CLAUDE|ANTHROPIC|AI_AGENT$|BAGGAGE$|CODEX)/;
+
 export function cleanEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (/^(CLAUDE|ANTHROPIC|AI_AGENT$|BAGGAGE$|CODEX)/.test(k)) continue;
+    if (AMBIENT_SESSION_ENV.test(k)) continue;
     env[k] = v;
   }
   return env;
@@ -34,14 +36,17 @@ export function cleanEnv(): NodeJS.ProcessEnv {
 // session that has to reach the harness — asking for a redeploy of the fix it
 // just landed (H-1046) — needs to name itself and to find the CLI whether or
 // not `rev` is on its PATH.
-export function sessionEnv(l: LoopConfig): NodeJS.ProcessEnv {
+export function sessionEnvOverrides(l: LoopConfig): Record<string, string> {
   return {
-    ...cleanEnv(),
     GIT_COMMITTER_NAME: l.name,
     GIT_COMMITTER_EMAIL: `${l.name}@crew.local`,
     REV_LOOP: l.name,
     REV_CLI: process.argv[1] ?? '',
   };
+}
+
+export function sessionEnv(l: LoopConfig): NodeJS.ProcessEnv {
+  return { ...cleanEnv(), ...sessionEnvOverrides(l) };
 }
 
 export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: string, model = l.model, choice?: RunChoice): SessionResult {
@@ -70,8 +75,8 @@ export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: stri
 // Sessions get exactly the roster's MCP surface: Helm (with this loop's actor
 // identity) plus any extra servers the loop declares. Each adapter serializes
 // this one record its CLI's way and keeps ambient user-scope servers out.
-function mcpServers(g: GlobalConfig, l: LoopConfig, model: string): Record<string, Record<string, unknown>> {
-  const helmEnv: Record<string, string> = { HELMO_ACTOR: JSON.stringify(loopActor(l, model)) };
+export function mcpServers(g: GlobalConfig, l: LoopConfig, model: string, session?: string): Record<string, Record<string, unknown>> {
+  const helmEnv: Record<string, string> = { HELMO_ACTOR: JSON.stringify(loopActor(l, model, session)) };
   if (g.helmo_db) helmEnv['HELMO_DB'] = g.helmo_db;
   const servers: Record<string, Record<string, unknown>> = {
     helmo: { command: 'node', args: [g.helmo_mcp_server], env: helmEnv },
@@ -203,6 +208,52 @@ export function systemPrompt(l: LoopConfig): string {
   const parts = [readFileSync(l.constitution, 'utf8')];
   for (const s of l.skills ?? []) parts.push(`\n\n--- Skill: ${s} ---\n\n${readFileSync(s, 'utf8')}`);
   return parts.join('');
+}
+
+/** Everything Rev decides about a session before a CLI is invoked, as data.
+ *  `runClaude` below spends this on a spawn; a second consumer — the Meetings
+ *  room, where Arthur types instead of the queue (H-1152) — spends it on an
+ *  Agent SDK session. One composition, so a seat's meeting and its loop cannot
+ *  drift apart: same cwd, same skills, same Helm identity, same clean env. */
+export interface SessionSpec {
+  seat: string;
+  in_roster: boolean;         // false when the caller supplied cwd/constitution for a seat with no loop
+  runtime: Runtime;
+  model: string;
+  cwd: string;
+  constitution: string;
+  skills: string[];
+  system_prompt: string;      // the same bytes runClaude writes to --append-system-prompt-file
+  mcp_servers: Record<string, Record<string, unknown>>;
+  actor: object;              // the Helm identity inside mcp_servers.helmo, spelled out for the caller
+  // Only what Rev SETS. The caller's own environment is deliberately absent:
+  // sessionEnv() copies this process's variables, and a spec is printed to
+  // stdout. The rule for the rest is env_strip — drop every name matching it,
+  // then apply these.
+  env: Record<string, string>;
+  env_strip: string;
+  flags: { strict_mcp_config: boolean; dangerously_skip_permissions: boolean };
+}
+
+export function sessionSpec(
+  g: GlobalConfig, l: LoopConfig, opts: { model?: string; session?: string; in_roster?: boolean } = {},
+): SessionSpec {
+  const model = opts.model ?? l.model;
+  return {
+    seat: l.name,
+    in_roster: opts.in_roster ?? true,
+    runtime: l.runtime,
+    model,
+    cwd: l.cwd,
+    constitution: l.constitution,
+    skills: l.skills ?? [],
+    system_prompt: systemPrompt(l),
+    mcp_servers: mcpServers(g, l, model, opts.session),
+    actor: loopActor(l, model, opts.session),
+    env: sessionEnvOverrides(l),
+    env_strip: AMBIENT_SESSION_ENV.source,
+    flags: { strict_mcp_config: true, dangerously_skip_permissions: true },
+  };
 }
 
 function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string): SessionResult {
