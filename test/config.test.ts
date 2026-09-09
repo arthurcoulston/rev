@@ -109,6 +109,16 @@ mid = "x-mid"
     expect(() => loadRoster()).toThrow(/needs either 'model'.*or 'tier'/);
   });
 
+  it('refuses a loop key it does not name — the retired prompt tail first among them (H-1186)', () => {
+    // A `prompt` used to append free text from this file to every iteration:
+    // prose outside git, caps and review. Unknown keys fail at load so the
+    // channel cannot come back under any name.
+    home(LOOP + 'runtime = "claude"\nmodel = "m"\nprompt = "be brief"\n');
+    expect(() => loadRoster()).toThrow(/unknown key 'prompt'/);
+    home(LOOP + 'runtime = "claude"\nmodel = "m"\npreamble = "be brief"\n');
+    expect(() => loadRoster()).toThrow(/unknown key 'preamble'/);
+  });
+
   it('a future provider is a table entry naming its adapter, with config riding along (H-520)', () => {
     home(
       LOOP + 'provider = "kimi"\ntier = "mid"\n',

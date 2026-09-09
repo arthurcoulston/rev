@@ -111,6 +111,13 @@ export function resolveRef(
   return { provider: name!, runtime: p.runtime, model, probe_model: probe, prices: p.prices, config: p.config };
 }
 
+/** The complete set of keys a [loops.<name>] table may carry. */
+const LOOP_KEYS = new Set([
+  'workstream', 'cwd', 'constitution', 'version', 'pace', 'idle_floor_s',
+  'runtime', 'model', 'provider', 'tier', 'probe_tier', 'probe_model', 'rotation', 'fallback', 'routing',
+  'mcp_extra', 'skills', 'mock_cmd', 'burn_usd_per_hour', 'burn_usd_per_day', 'continue_cap',
+]);
+
 export function loadRoster(): Roster {
   const path = join(revHome(), 'roster.toml');
   if (!existsSync(path)) {
@@ -134,6 +141,16 @@ export function loadRoster(): Roster {
   const rawLoops = (raw['loops'] ?? {}) as Record<string, Record<string, unknown>>;
   for (const [name, l] of Object.entries(rawLoops)) {
     if (name === 'supervisor') throw new Error("'supervisor' is a reserved name (the fleet supervisor's own state dir).");
+    // Every loop key is named in LOOP_KEYS; anything else fails the roster at
+    // load. The guard exists for prose: a `prompt` tail used to append free
+    // text from this file — uncapped, unreviewed, outside git — to every
+    // iteration (retired H-1186). A seat's words live in its constitution
+    // and roster skills, which the context check measures.
+    for (const key of Object.keys(l)) {
+      if (!LOOP_KEYS.has(key)) {
+        throw new Error(`Loop '${name}': unknown key '${key}'. Prose for a seat belongs in its constitution or a roster skill, never in roster.toml.`);
+      }
+    }
     if (l['routing'] !== undefined && !['rotation', 'headroom'].includes(String(l['routing']))) {
       throw new Error(`Loop '${name}': routing must be 'rotation' or 'headroom'.`);
     }
@@ -165,7 +182,6 @@ export function loadRoster(): Roster {
       version: String(l['version'] ?? '0.1'),
       pace: Number(l['pace'] ?? 1),
       idle_floor_s: Number(l['idle_floor_s'] ?? 0),
-      prompt: l['prompt'] ? String(l['prompt']) : undefined,
       mcp_extra: l['mcp_extra'] ? resolveHome(String(l['mcp_extra'])) : undefined,
       skills: Array.isArray(l['skills']) ? (l['skills'] as unknown[]).map((s) => resolveHome(String(s))) : undefined,
       mock_cmd: l['mock_cmd'] ? String(l['mock_cmd']) : undefined,

@@ -39,32 +39,26 @@ function tryWakeCheck(g: GlobalConfig, l: LoopConfig, sinceSeq: number): WakeChe
   }
 }
 
-// One stream reads as "the workstream" and keeps the wording every seat has
-// been running. Several must be named, because a goal met in one says nothing
-// about the others — and the close-out cue is the whole reason that matters
-// (H-954). Streams carrying neither goal nor budget add no steering and stay
-// out of the preamble; routing the work is already enough context (H-1127).
+// Steering is numbers in fixed wording (H-1186): the budget figures from the
+// store and nothing else. A stream's goal used to ride here as prose —
+// standing instruction in every prompt, from a store field no cap or review
+// covered — and the roster's `prompt` tail was the same channel one level up.
+// Several budgeted streams are each named, because one stream's close-out cue
+// says nothing about another (H-954); streams without a budget add nothing
+// and stay out of the preamble (H-1127).
 export function steeringText(streams: WorkstreamInfo[]): string {
-  const steered = streams.filter((w) => w.goal || w.budget_usd !== null);
-  const goals = steered.filter((w) => w.goal);
-  const budgets = steered.filter((w) => w.budget_usd !== null);
-  if (steered.length === 0) return '';
+  const budgets = streams.filter((w) => w.budget_usd !== null);
+  if (budgets.length === 0) return '';
   const money = (w: WorkstreamInfo) =>
     `$${w.spent_usd.toFixed(2)} of $${(w.budget_usd ?? 0).toFixed(2)} spent, $${(w.remaining_usd ?? 0).toFixed(2)} remains`;
-  if (steered.length === 1) {
-    const w = steered[0]!;
-    return (
-      (w.goal ? `The workstream '${w.name}' — what done means for the whole stream: ${w.goal}. If the goal is already met, closing out is the right move; do not manufacture polish. ` : '') +
-      (w.budget_usd !== null ? `Budget for '${w.name}': ${money(w)}. The budget is the plan — take the highest-value work first; if it is exhausted, close out honestly with residuals documented rather than starting more. ` : '')
-    );
+  if (budgets.length === 1) {
+    const w = budgets[0]!;
+    return `Budget for '${w.name}': ${money(w)}. The budget is the plan — take the highest-value work first; if it is exhausted, close out honestly with residuals documented rather than starting more. `;
   }
   return (
-    `You hold steered work in more than one workstream (${steered.map((w) => `'${w.name}'`).join(', ')}). ` +
-    (goals.length ? `A goal met in one says nothing about the others. ` : '') +
-    goals.map((w) => `'${w.name}' — what done means for that stream: ${w.goal}. `).join('') +
-    (goals.length ? `If a stream's goal is already met, closing out that stream's work is the right move; do not manufacture polish. ` : '') +
+    `You hold budgeted work in more than one workstream (${budgets.map((w) => `'${w.name}'`).join(', ')}). ` +
     budgets.map((w) => `Budget for '${w.name}': ${money(w)}. `).join('') +
-    (budgets.length ? `A budget is the plan — take the highest-value work first; where one is exhausted, close out that stream honestly with residuals documented rather than starting more. ` : '')
+    `A budget is the plan — take the highest-value work first; where one is exhausted, close out that stream honestly with residuals documented rather than starting more. `
   );
 }
 
@@ -331,8 +325,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       split +
       disposition +
       `record progress honestly, then end the session. ` +
-      deploy +
-      `${l.prompt ?? ''}`;
+      deploy;
     let readyBefore: string[] | null = null;
     if (l.workstream !== '*') {
       try { readyBefore = readyTicketIds(g, l); } catch (e) { logEvent(l.name, 'decline-check-failed', `before ${String(e).slice(0, 160)}`); }

@@ -66,7 +66,6 @@ export interface LoopConfig {
   version: string;         // loop version — part of the actor identity
   pace: number;            // velocity fraction (0,1]
   idle_floor_s: number;    // min seconds idle before a wake is honored; 0 = immediate (H-336/H-545)
-  prompt?: string;         // iteration prompt tail
   mcp_extra?: string;      // optional path to JSON with additional MCP servers
   skills?: string[];       // crew skill files appended to the constitution at spawn (H-247)
   mock_cmd?: string;       // mock runtime only: shell command to run per iteration

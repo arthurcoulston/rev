@@ -746,7 +746,7 @@ fi
     expect(events).toMatch(new RegExp(`spend\\s+iter=1 ticket=${b} tokens=-80000 cost=0`));
   });
 
-  it('workstream steering (goal + budget) lands in the iteration prompt', () => {
+  it('the workstream budget lands in the iteration prompt as numbers in fixed wording (H-1186)', () => {
     const e = setup(`[loops.steer-loop]
 workstream = "rev-test"
 cwd = "/tmp"
@@ -754,14 +754,12 @@ runtime = "mock"
 mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
 `);
     seedTicket(e, 'Steered work item');
-    helm(
-      e,
-      ['workstream-set', '--name', 'rev-test', '--goal', 'the gala happens', '--budget-usd', '50'],
-      '{"name":"operator","kind":"human"}',
-    );
+    helm(e, ['workstream-set', '--name', 'rev-test', '--budget-usd', '50'], '{"name":"operator","kind":"human"}');
     const out = rev(e, ['run', 'steer-loop', '--count', '1']);
-    expect(out).toContain('what done means for the whole stream: the gala happens');
-    expect(out).toContain('$0.00 of $50.00 spent');
+    expect(out).toContain("Budget for 'rev-test': $0.00 of $50.00 spent, $50.00 remains");
+    // The prompt carries no prose from the store: the goal that used to ride
+    // here was standing instruction outside caps and review.
+    expect(out).not.toContain('what done means');
   });
 
   it('steering names every stream the seat holds work in, not just the one it watches (H-954)', () => {
@@ -778,15 +776,15 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
 `);
     seedTicket(e, 'Work in the watched stream');
     helm(e, ['create', '--title', 'Routed in from elsewhere', '--body', 'reserved to this seat', '--workstream', 'rev-elsewhere', '--type', 'ops', '--assignee', 'multi-loop']);
-    helm(e, ['workstream-set', '--name', 'rev-test', '--goal', 'the gala happens'], '{"name":"operator","kind":"human"}');
+    helm(e, ['workstream-set', '--name', 'rev-test', '--budget-usd', '50'], '{"name":"operator","kind":"human"}');
     helm(e, ['workstream-set', '--name', 'rev-elsewhere', '--budget-usd', '25'], '{"name":"operator","kind":"human"}');
     const out = rev(e, ['run', 'multi-loop', '--count', '1']);
-    expect(out).toContain("'rev-test' — what done means for that stream: the gala happens");
+    expect(out).toContain("You hold budgeted work in more than one workstream ('rev-test', 'rev-elsewhere')");
+    expect(out).toContain("Budget for 'rev-test': $0.00 of $50.00 spent");
     expect(out).toContain("Budget for 'rev-elsewhere': $0.00 of $25.00 spent");
-    expect(out).toContain('A goal met in one says nothing about the others');
     // The sentence that made the old behaviour dangerous rather than merely
-    // wrong: one stream's goal must never authorize closing out another's.
-    expect(out).not.toContain('If the goal is already met, closing out is the right move');
+    // wrong: one stream's close-out cue must never authorize closing out another's.
+    expect(out).not.toContain('if it is exhausted, close out honestly');
   });
 
   it('a held stream without steering stays out of the prompt (H-1127)', () => {
@@ -797,9 +795,9 @@ runtime = "mock"
 mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
 `);
     helm(e, ['create', '--title', 'Held work in a stream nobody steered', '--body', 'reserved to this seat', '--workstream', 'rev-quiet', '--type', 'ops', '--assignee', 'quiet-loop']);
-    helm(e, ['workstream-set', '--name', 'rev-test', '--goal', 'the gala happens'], '{"name":"operator","kind":"human"}');
+    helm(e, ['workstream-set', '--name', 'rev-test', '--budget-usd', '50'], '{"name":"operator","kind":"human"}');
     const out = rev(e, ['run', 'quiet-loop', '--count', '1']);
-    expect(out).toContain("The workstream 'rev-test'");
+    expect(out).toContain("Budget for 'rev-test'");
     expect(out).not.toContain("'rev-quiet'");
     expect(out).not.toContain('unsteered');
   });
@@ -817,7 +815,7 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
     const out = rev(e, ['run', 'unsteered-loop', '--count', '1']);
     expect(out).not.toContain('what done means');
     expect(out).not.toContain('Budget for');
-    expect(out).not.toContain('You hold steered work');
+    expect(out).not.toContain('You hold budgeted work');
   });
 
   it('the idle rule covers the assigned list, not only the watched stream (H-987)', () => {
@@ -849,11 +847,10 @@ runtime = "mock"
 mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
 `);
     helm(e, ['create', '--title', 'Held work, same stream', '--body', 'reserved to this seat', '--workstream', 'rev-test', '--type', 'ops', '--assignee', 'solo-loop']);
-    helm(e, ['workstream-set', '--name', 'rev-test', '--goal', 'the gala happens', '--budget-usd', '50'], '{"name":"operator","kind":"human"}');
+    helm(e, ['workstream-set', '--name', 'rev-test', '--budget-usd', '50'], '{"name":"operator","kind":"human"}');
     const out = rev(e, ['run', 'solo-loop', '--count', '1']);
-    expect(out).toContain("what done means for the whole stream: the gala happens");
-    expect(out).toContain('If the goal is already met, closing out is the right move');
-    expect(out).toContain('$0.00 of $50.00 spent');
+    expect(out).toContain("Budget for 'rev-test': $0.00 of $50.00 spent");
+    expect(out).toContain('if it is exhausted, close out honestly');
     expect(out).not.toContain('more than one workstream');
   });
 

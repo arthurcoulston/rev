@@ -13,19 +13,23 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   idle or halt. The iteration prompt ("work ONE ticket to a natural stopping
   point") lives here. Its first sentence declares the run a Rev loop rather
   than a summon, before tool or routing context can be misread; it then gives
-  the workstream's steering when set
-  (helm-cli `workstream`: goal + remaining budget, helmo H-55) — disclosure
+  the workstream's budget when set
+  (helm-cli `workstream`: remaining budget, helmo H-55) — disclosure
   before planning, and a steering fetch failure never stops the loop.
   Steering covers EVERY stream the seat has work in, not just the one it
   watches (H-954): `seatStreams` lists the tickets assigned to the seat, and
-  the watched stream plus their streams are what `steeringText` speaks for.
-  One stream keeps the wording every seat has been running; several are named
-  individually, and the close-out cue becomes per-stream — because the old
-  singular "if the goal is already met, closing out is the right move" was
-  said about the WATCHED stream while the session's actual work sat in
-  another. Only streams with a goal or budget appear in the preamble; routed
-  streams carrying neither add no steering and naming them in every iteration
-  is prompt noise (H-1127). `workstream = "*"` makes a loop store-wide (H-92,
+  the watched stream plus their streams are what `steeringText` speaks for,
+  each budgeted stream named individually with its own close-out cue. Only
+  streams with a budget appear in the preamble; routed streams without one
+  add nothing and naming them in every iteration is prompt noise (H-1127).
+  **The prompt carries no prose from outside git** (H-1186, Arthur's ruling
+  2026-09-08): the store's workstream `goal` and the roster's per-loop
+  `prompt` tail were both free text — uncapped, unreviewed — appended to
+  every iteration. Both are gone: `steeringText` speaks numbers in fixed
+  wording, and `loadRoster` rejects any loop key outside `LOOP_KEYS`, so a
+  prose channel cannot reappear under any name. A seat's words are its
+  constitution and roster skills, which the crew's context check measures.
+  `workstream = "*"` makes a loop store-wide (H-92,
   built for bosun): wake is unscoped but fires on MOTION ONLY (changed_since, never
   ready_count — the whole store's standing backlog would wake a judge every
   poll forever), no steering fetch at all — its prompt carries none of the
