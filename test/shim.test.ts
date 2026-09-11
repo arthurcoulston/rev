@@ -135,13 +135,14 @@ describe('session process group (H-467)', () => {
 
   it('a signal to the whole process group does not reach the in-flight session', async () => {
     const home = mkdtempSync(join(tmpdir(), 'rev-grp-'));
+    const started = join(home, 'session-started');
     const marker = join(home, 'session-closed');
     const file = join(home, 'driver.mts');
     writeFileSync(
       file,
       `import { runSession } from ${JSON.stringify(join(import.meta.dirname, '..', 'src', 'shim.ts'))};\n` +
         `runSession({}, { name: 'grouptest', runtime: 'mock', model: 'm', version: '0', cwd: '/tmp',\n` +
-        `  mock_cmd: 'sleep 8; echo closed > ${marker}' }, 'prompt');\n`,
+        `  mock_cmd: 'echo started > ${started}; sleep 2; echo closed > ${marker}' }, 'prompt');\n`,
     );
 
     const child = spawn('npx', ['tsx', file], {
@@ -154,16 +155,23 @@ describe('session process group (H-467)', () => {
     let err = '';
     child.stderr!.on('data', (d: Buffer) => (err += d));
 
-    // Signal the group once the session is genuinely in flight. This kills the
-    // driver, the way a real drain kills the loop process.
-    await new Promise((r) => setTimeout(r, 4000));
+    // Signal the group once the session says it is genuinely in flight. This
+    // kills the driver, the way a real drain kills the loop process.
+    const startDeadline = Date.now() + 10_000;
+    while (!existsSync(started) && Date.now() < startDeadline) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(existsSync(started), 'session never started').toBe(true);
     expect(err, 'driver failed before the session started').toBe('');
     process.kill(-child.pid!, 'SIGTERM');
     await new Promise((r) => child.on('exit', r));
     expect(existsSync(marker), 'session killed before it could finish').toBe(false); // still sleeping
 
     // Give the orphaned session the rest of its run.
-    await new Promise((r) => setTimeout(r, 6000));
+    const closeDeadline = Date.now() + 10_000;
+    while (!existsSync(marker) && Date.now() < closeDeadline) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
     expect(existsSync(marker), 'the session did not survive the group signal').toBe(true);
   }, 30_000);
 });
