@@ -190,15 +190,21 @@ export function openEscalation(g: GlobalConfig, l: LoopConfig): string | null {
 interface EscalationState {
   id: string;
   status: string;
-  last_answer: { resolution: string } | null;
+  last_answer: { resolution: string; chosen_option?: string } | null;
 }
 
-/** An answered resume is process-control input, not work for the halted seat. */
+/** An answered resume is process-control input, not work for the halted seat.
+ *  `resolution: resume` only reopens the ticket: investigate and hold use the
+ *  same lifecycle transition. The recorded choice is the authority to clear
+ *  BLOCKED. Dashboard ratification records the recommendation text, so accept
+ *  either the option label or that label followed by its rationale. */
 export function answeredResumeEscalation(g: GlobalConfig, l: LoopConfig): string | null {
   const id = openEscalation(g, l);
   if (!id) return null;
   const ticket = run(g, ['get', id]) as EscalationState;
-  return ticket.status === 'open' && ticket.last_answer?.resolution === 'resume' ? id : null;
+  const choice = ticket.last_answer?.chosen_option?.trim().toLowerCase();
+  return ticket.status === 'open' && ticket.last_answer?.resolution === 'resume' &&
+    (choice === 'resume' || choice?.startsWith('resume —')) ? id : null;
 }
 
 export function completeAnsweredResume(g: GlobalConfig, ticketId: string, runningPath: string): void {

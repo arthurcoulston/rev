@@ -224,6 +224,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   `shim.ts`.
   Child stdout/err goes to state/<loop>/console.log; supervisor decisions to
   state/supervisor/events.log. 'supervisor' is a reserved loop name.
+- A human answer reopens a Helmo ticket with `resolution: resume` regardless
+  of whether its operational choice was resume, hold, or investigate. The
+  supervisor clears `BLOCKED` only when `last_answer.chosen_option` is the
+  `resume` choice (or the dashboard's `resume — rationale` recommendation);
+  ticket lifecycle state alone is not process-control authority (H-1320).
 - `redeploy.ts` — activating rev's own committed, tested fix (H-1046). A loop
   that lands one cannot restart the fleet from inside its own iteration, so it
   writes a REDEPLOY sentinel (`rev redeploy --ticket <id> --reason ...`); the

@@ -53,7 +53,24 @@ function answerResume(e: Env, ticketId: string): void {
     store.answerTicket(
       { name: 'Arthur', kind: 'human' },
       ticketId,
-      { answer: 'Resume this loop once.', resolution: 'resume' },
+      { answer: 'Resume this loop once.', chosen_option: 'resume', resolution: 'resume' },
+    );
+  } finally {
+    store.close();
+  }
+}
+
+function answerInvestigate(e: Env, ticketId: string): void {
+  const store = new Store(join(e.home, 'helm.db'));
+  try {
+    store.answerTicket(
+      { name: 'Arthur', kind: 'human', session: 'dashboard' },
+      ticketId,
+      {
+        answer: 'Ratified from the dashboard',
+        chosen_option: 'investigate — consecutive failures usually mean something real',
+        resolution: 'resume',
+      },
     );
   } finally {
     store.close();
@@ -209,6 +226,39 @@ node ${HELM_CLI} update --ticket $ID --note "kept producing" --evidence-kind oth
       await waitFor(() => (helm(e, ['get', escalation.id]) as { status: string }).status === 'done', 'resume ticket closed');
       expect(existsSync(join(e.home, 'state', 'resume-loop', 'BLOCKED'))).toBe(false);
       expect(readFileSync(join(e.home, 'state', 'resume-loop', 'events.log'), 'utf8')).toMatch(/resume-complete.*ticket=H-/);
+    } finally {
+      proc.kill('SIGKILL');
+    }
+  });
+
+  it('leaves a blocked loop down when the dashboard answer chooses investigate (H-1320)', { timeout: 60000 }, async () => {
+    const e = setup(`[loops.investigate-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+continue_cap = 1
+mock_cmd = '''
+ID=$(node ${HELM_CLI} list --assignee investigate-loop --status in_progress --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -z "$ID" ]; then
+  ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+  node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
+fi
+node ${HELM_CLI} update --ticket $ID --note "kept producing" --evidence-kind other --evidence-ref burn
+'''
+`);
+    helm(e, ['create', '--title', 'work that reaches the breaker', '--body', 'x', '--workstream', 'rev-test', '--type', 'ops']);
+    const { proc } = startFleet(e);
+    try {
+      await waitFor(() => existsSync(join(e.home, 'state', 'investigate-loop', 'BLOCKED')), 'burn breaker halt');
+      await waitFor(() => (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets.length === 1, 'burn breaker escalation');
+      const escalation = (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: { id: string }[] }).tickets[0]!;
+      answerInvestigate(e, escalation.id);
+
+      await sleep(3000); // several supervisor polls: the answer must not restart it
+      expect(loopPid(e, 'investigate-loop')).toBeNull();
+      expect(existsSync(join(e.home, 'state', 'investigate-loop', 'BLOCKED'))).toBe(true);
+      expect((helm(e, ['get', escalation.id]) as { status: string }).status).toBe('open');
+      expect(readFileSync(join(e.home, 'state', 'investigate-loop', 'events.log'), 'utf8')).not.toContain('answer-resume');
     } finally {
       proc.kill('SIGKILL');
     }
