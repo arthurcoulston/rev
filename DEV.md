@@ -294,6 +294,26 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 ## Commands
 
 - `npm run build`, `npm test` (ladder units + e2e with mock runtime).
+- **`npm test` runs two test files at a time, not eight (H-1347).** Vitest's
+  default is `availableParallelism() - 1`, and this suite's parallel unit is
+  not a worker, it is everything a worker spawns: the five e2e files each
+  drive a real supervisor, real loops and a real Helm store. The cap is free
+  — measured on 159cb11, a quiet-ish machine, 225/225 green each time:
+  workers 8 → 83.8s wall / 111s CPU, 2 → 83.3s / 105s, 1 → 145.3s. Wall time
+  here is set by the slowest single file (`loop.e2e.test.ts`, ~80s), not by
+  how many run beside it, so two costs nothing and one costs a minute. What
+  the cap buys is resident weight: peak vitest processes 10 → 6.
+
+  Do not read that as the cure for a red CI run. On 2026-09-13 this suite
+  read red in CI with nothing wrong in it — both attempts failed, the first
+  killed at the runner's 600s cap and the retry failing seven tests, every
+  one a timeout and every one absurd (a 5s budget reported at 106000ms, a
+  450ms test at 106251ms). The same commit passes in 84s here. It was the
+  machine: that night `connectors` took **971s** for a build and a typecheck,
+  a step with no fan-out at all, and four of six repos ran red or flaky. The
+  cap bounds what this suite asks for; it cannot make a starved box compute.
+  What ends that class of red is CI not reading a machine already carrying
+  the live fleet — H-1352.
 - `node dist/cli.js routing` previews working-model selection without starting
   work. `usage --poll` refreshes Claude remotely and Codex from local rollouts.
 - `npm run vendor:tokens` refreshes the vendored estate design tokens,

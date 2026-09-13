@@ -4,7 +4,7 @@
   "description": "Rev keeps agent loops turning: process supervision for autonomous agent loops driven by a Helm work record.",
   "main": "index.js",
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run --maxWorkers=2",
     "build": "tsc",
     "view": "tsx src/view.ts",
     "vendor:tokens": "node scripts/vendor-estate-tokens.mjs",
