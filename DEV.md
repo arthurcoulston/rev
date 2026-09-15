@@ -318,6 +318,21 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   cap bounds what this suite asks for; it cannot make a starved box compute.
   What ends that class of red is CI not reading a machine already carrying
   the live fleet — H-1352.
+
+  One red-under-load case was neither slowness nor a starved box. The
+  resume-failure case in `supervisor.e2e.test.ts` (H-1038) failed only on a
+  busy machine, and giving it more time made it worse: with its wait budget
+  raised from 20s to the whole 60s of the case it still timed out, at 55s
+  instead of 25s. It was racing, not waiting. The supervisor calls a resume
+  healthy once the restarted child has stayed alive for `min_uptime_seconds`,
+  and the fixture set that to 1s — while the loop under test needs two failed
+  runs and the burn breaker to die, a couple of seconds out. Idle, death won
+  and the case passed; loaded, liveness won, the resume was recorded healthy,
+  and the failure return the case asserts never came. The cure was fixture
+  shape, not budget: that case sets `min_uptime_seconds = 20` and now passes
+  at three times the load that broke it (H-1419). So when a case is red only
+  under load, ask first whether it is waiting on something slow or racing
+  something fast. A timeout raised on a race only buys a longer red.
 - `node dist/cli.js routing` previews working-model selection without starting
   work. `usage --poll` refreshes Claude remotely and Codex from local rollouts.
 - `npm run vendor:tokens` refreshes the vendored estate design tokens,

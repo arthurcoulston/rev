@@ -23,7 +23,12 @@ interface Env {
   env: NodeJS.ProcessEnv;
 }
 
-function setup(loopsToml: string, extraGlobal = ''): Env {
+// min_uptime_seconds is how long a restarted loop must stay alive before the
+// supervisor calls the resume healthy and closes the answered ticket. Most
+// cases want it tiny so nothing waits on it; a case that asserts the FAILED
+// resume path must set it wide, because the two paths race — see the
+// resume-failure case below.
+function setup(loopsToml: string, extraGlobal = '', minUptimeSeconds = 1): Env {
   const home = mkdtempSync(join(tmpdir(), 'rev-fleet-'));
   const db = join(home, 'helm.db');
   writeFileSync(
@@ -35,7 +40,7 @@ helmo_db = "${db}"
 poll_seconds = 1
 respawn_backoff_seconds = 1
 respawn_backoff_cap_seconds = 4
-min_uptime_seconds = 1
+min_uptime_seconds = ${minUptimeSeconds}
 ${extraGlobal}
 ${loopsToml}`,
   );
@@ -269,8 +274,19 @@ node ${HELM_CLI} update --ticket $ID --note "kept producing" --evidence-kind oth
     }
   });
 
+  // The restarted loop does not die on its first failed run: it fails, retries,
+  // and only the burn breaker halts it, so its death is a couple of seconds
+  // out. Against min_uptime_seconds = 1 that is a race the supervisor can win
+  // on a loaded machine — it finds the child still alive one second in, calls
+  // the resume healthy, closes the ticket, and the failure return this case
+  // asserts never happens. Idle it loses that race and the case passes, which
+  // is why the flake only showed under load (H-1419). Twenty seconds is the
+  // real fleet's shape anyway (the shipped default is 60) and leaves the loop
+  // roughly ten times the room it needs to block itself. Do not compress it
+  // back for speed: nothing in this case waits on it.
   it('blocks again and returns the answered ticket when the restarted loop fails (H-1038)', { timeout: 60000 }, async () => {
-    const e = setup(`[loops.resume-loop]
+    const e = setup(
+      `[loops.resume-loop]
 workstream = "rev-test"
 cwd = "/tmp"
 runtime = "mock"
@@ -284,7 +300,10 @@ if [ -z "$ID" ]; then
 fi
 node ${HELM_CLI} update --ticket $ID --note "kept producing" --evidence-kind other --evidence-ref burn
 '''
-`);
+`,
+      '',
+      20,
+    );
     helm(e, ['create', '--title', 'work that burns', '--body', 'x', '--workstream', 'rev-test', '--type', 'ops']);
     const { proc } = startFleet(e);
     try {
