@@ -680,7 +680,12 @@ dependency this repo should grow for one link.
 
 Helmo is the work record and must be built separately; runtime rosters point at
 its `dist/cli.js` and `dist/server.js`, while integration tests use the built
-checkout named by `REV_TEST_HELMO` (falling back to sibling `../helmo`). Loop
+checkout named by `REV_TEST_HELMO` (falling back to sibling `../helmo`) —
+every reference through `test/helmo.ts`, never a written-out `../../helmo`
+path, which resolves only where the two checkouts are adjacent. That
+prerequisite is declared to the release gate as `publish.cold.requires_env` in
+package.json, so its scratch clone is given the variable instead of failing at
+collection; see crew's PUBLISHING.md, "Works cold" (H-1400). Loop
 identities and constitutions live outside this repository and are referenced by
 the instance roster. Meetings (`~/projects/meetings`, R-31) is a consumer, not a
 dependency: it shells out to `session-spec` to run a seat's session under a
