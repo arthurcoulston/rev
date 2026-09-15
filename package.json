@@ -11,6 +11,13 @@
     "vendor:avatars": "node scripts/vendor-estate-avatars.mjs",
     "vendor:reach": "node scripts/vendor-estate-reach.mjs"
   },
+  "publish": {
+    "cold": {
+      "requires_env": [
+        "REV_TEST_HELMO"
+      ]
+    }
+  },
   "keywords": [],
   "author": "",
   "license": "MIT",
