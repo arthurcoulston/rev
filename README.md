@@ -24,8 +24,10 @@ Every iteration is a full agent session started with the agent CLI's permission 
 sandbox turned off — `claude --dangerously-skip-permissions`, or `codex exec
 --dangerously-bypass-approvals-and-sandbox`. Nothing stops to ask. The session runs unattended
 in the `cwd` its roster entry names, and from there it can read and write files, run commands,
-and reach whatever that user account reaches. Its only bounds are its constitution, that `cwd`,
-and the MCP servers the roster hands it. `rev service install` makes all of this start at login.
+and reach whatever that user account reaches. The `cwd` is only its starting directory, the
+constitution is behavioral guidance, and the roster's MCP list does not restrict shell, filesystem,
+or network access. The user account's permissions are the effective security boundary.
+`rev service install` makes all of this start at login.
 Register a loop only for a folder and a workstream you would hand an unattended agent.
 
 ## The shape of it

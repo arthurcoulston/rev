@@ -41,7 +41,9 @@ constitution — a loop without a deliberate constitution is a worker without a 
 Before you add any loop, tell the human what one is. Every iteration runs a full agent session
 with the agent CLI's permission prompts and sandbox turned off, unattended, in the `cwd` that
 roster entry names; from there it can read and write files, run commands, and reach whatever
-their user account reaches. Its bounds are its constitution, that `cwd`, and its MCP servers.
+their user account reaches. The `cwd` is only its starting directory, the constitution is
+behavioral guidance, and its MCP configuration does not restrict shell, filesystem, or network
+access. Their user account's permissions are the effective security boundary.
 Add loops only for folders and workstreams they would hand an unattended agent. The README's
 "What a loop session can do" is the short version to show them.
 
@@ -101,7 +103,9 @@ mock install.
 > - **What a loop session can do**: each iteration is an agent session run with the CLI's
 >   permission prompts and sandbox disabled, unattended, in the folder its roster entry names.
 >   It can read and write files, run commands, and reach whatever your user account reaches. Its
->   only bounds are its constitution, that folder, and its MCP servers. Register loops only for
+>   folder is only a starting directory; its constitution is behavioral guidance; and its MCP
+>   configuration does not restrict shell, filesystem, or network access. Your account's
+>   permissions are the effective security boundary. Register loops only for
 >   work you would hand an unattended agent.
 > - **When a loop needs you**, it files a ticket into Helmo's awaiting-you queue — your normal
 >   meeting surfaces it. No log-watching required.

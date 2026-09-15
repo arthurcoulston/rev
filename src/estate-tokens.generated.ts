@@ -1,6 +1,7 @@
 // VENDORED — do not edit. Source: the estate repo, tokens/estate-tokens.css
 // Refresh: node scripts/vendor-estate-tokens.mjs
 // Drift is a test failure: npm test (skipped, loudly, with no estate checkout)
+// shadcn-derived values retain their MIT notice in THIRD_PARTY_NOTICES.md.
 //
 // The estate shell is the source of the visual system every estate surface
 // shares (R-11); rev consumes it as a copy so it stays publishable alone.

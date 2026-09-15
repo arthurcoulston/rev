@@ -143,8 +143,10 @@ roster — different loops on different models is a one-line difference.
 CLI's approval prompts and sandbox disabled (`--dangerously-skip-permissions` for claude,
 `--dangerously-bypass-approvals-and-sandbox` for codex). An unattended loop cannot answer a prompt,
 so a loop that asks is a loop that hangs; one permission story per fleet, whichever CLI runs the
-iteration. What remains bounding a session is its constitution, its `cwd`, and its MCP surface —
-so registering a loop is the consequential act, and the docs say so where an operator meets it.
+iteration. The `cwd` is only a starting directory, the constitution is behavioral guidance, and
+the MCP surface does not restrict shell, filesystem, or network access. The user account's
+permissions are the effective security boundary, so registering a loop is the consequential act
+and the docs say so where an operator meets it.
 
 ## Implementation
 
