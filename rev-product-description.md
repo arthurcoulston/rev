@@ -139,6 +139,13 @@ accounting, transient-API detection mapped to `LIMIT`, and config hygiene (sessi
 roster's MCP allowlist; no ambient user config). Loops select runtime and model per-loop from the
 roster — different loops on different models is a one-line difference.
 
+"Correct flags" includes the permission posture, and it is deliberate: every session runs with the
+CLI's approval prompts and sandbox disabled (`--dangerously-skip-permissions` for claude,
+`--dangerously-bypass-approvals-and-sandbox` for codex). An unattended loop cannot answer a prompt,
+so a loop that asks is a loop that hangs; one permission story per fleet, whichever CLI runs the
+iteration. What remains bounding a session is its constitution, its `cwd`, and its MCP surface —
+so registering a loop is the consequential act, and the docs say so where an operator meets it.
+
 ## Implementation
 
 TypeScript/Node, matching Helm: shared contributor stack, testable supervision logic (the

@@ -137,7 +137,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   is writing gets it as a per-call parameter from the agent, or from its own
   `env` block in the loop's JSON, never from `HELMO_ACTOR`, which `cleanEnv()`
   does not carry into the session, H-324): claude via `--strict-mcp-config`,
-  codex via the whole-table `-c mcp_servers={...}` override (H-479). Codex
+  codex via the whole-table `-c mcp_servers={...}` override (H-479) — and that
+  override is argv, so an `mcp_extra` server's `env` block is `ps`-readable by
+  every local user for the session's lifetime where claude's copy is a 0700
+  scratch file; a loop that may run on codex must not carry a secret there
+  (documented in `examples/roster.toml`, H-1417). Codex
   gotchas the adapter encodes, all verified on codex-cli 0.150.1: the prompt
   goes in on stdin (`exec -`) because argv is ps-readable and size-capped;
   `--ignore-user-config` is always passed (H-520) — fleet behavior must not
@@ -330,7 +334,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   and a service manager — with no service installed it warns that the fleet
   will drain and stay down.
 - Dashboard: `node dist/view.js` (`REV_VIEW_PORT`, default 4500; binds
-  127.0.0.1, `REV_VIEW_HOST` to change) — restart after rebuild.
+  127.0.0.1, `REV_VIEW_HOST` to change) — restart after rebuild. It has no
+  authentication: widening the host serves every loop's home path, spend and
+  event trace to anyone who reaches the port.
 - What a seat's session is made of, as JSON, without running one:
   `node dist/cli.js session-spec <seat> --session <actor stamp> [--provider
   claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]`.

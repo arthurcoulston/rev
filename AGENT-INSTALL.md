@@ -38,6 +38,13 @@ Edit `~/.rev/roster.toml`: set `helmo_cli` and `helmo_mcp_server` to the Helmo c
 built paths. Do not define worker loops yet unless the human has already authored a
 constitution — a loop without a deliberate constitution is a worker without a character.
 
+Before you add any loop, tell the human what one is. Every iteration runs a full agent session
+with the agent CLI's permission prompts and sandbox turned off, unattended, in the `cwd` that
+roster entry names; from there it can read and write files, run commands, and reach whatever
+their user account reaches. Its bounds are its constitution, that `cwd`, and its MCP servers.
+Add loops only for folders and workstreams they would hand an unattended agent. The README's
+"What a loop session can do" is the short version to show them.
+
 ### 4. Verify with the mock loop
 
 Add (or uncomment) the mock smoke loop in the roster, then:
@@ -59,7 +66,10 @@ smoke loop from the roster afterwards if the human doesn't want it kept.
 cd <rev-path> && nohup npm run view > /tmp/rev-view.log 2>&1 &
 ```
 
-Read-only at `http://localhost:4500`, bound to 127.0.0.1 (`REV_VIEW_PORT` / `REV_VIEW_HOST` to change). Verify it responds.
+Read-only at `http://localhost:4500`, bound to 127.0.0.1 (`REV_VIEW_PORT` / `REV_VIEW_HOST` to
+change). Verify it responds. Leave the host alone unless the human asks: the dashboard has no
+authentication, so widening it past 127.0.0.1 serves every loop's home path, spend, and event
+trace to anyone who can reach the port.
 
 ### 6. Optional real-runtime smoke
 
@@ -88,6 +98,11 @@ mock install.
 > - **Survive reboots**: `rev service install` registers the supervisor as a user service
 >   (launchd/systemd) — offer this, but install only on the human's say-so: it changes what
 >   runs at login.
+> - **What a loop session can do**: each iteration is an agent session run with the CLI's
+>   permission prompts and sandbox disabled, unattended, in the folder its roster entry names.
+>   It can read and write files, run commands, and reach whatever your user account reaches. Its
+>   only bounds are its constitution, that folder, and its MCP servers. Register loops only for
+>   work you would hand an unattended agent.
 > - **When a loop needs you**, it files a ticket into Helmo's awaiting-you queue — your normal
 >   meeting surfaces it. No log-watching required.
 > - **To inspect the machine conversationally**: say "summon the watch officer" in any agent

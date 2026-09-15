@@ -1,5 +1,9 @@
 # Rev roster — copy to ~/.rev/roster.toml and edit.
 # Loops are instance data: they live here, never in the Rev repo.
+#
+# Every loop you define below runs unattended agent sessions with the agent CLI's
+# permission prompts and sandbox disabled, in the cwd you name. See "What a loop
+# session can do" in the README before adding one.
 
 [global]
 # Paths to your Helm checkout's built CLI and MCP server (required).
@@ -67,8 +71,10 @@ pace = 1.0                            # velocity fraction; 0.5 = half speed
 # rotation = ["claude", "codex"]      # alternate providers per iteration, same tier ("codex:small" pins a tier)
 # routing = "headroom"                # rank same-tier rotation by allowance/hour until reset; first choice when telemetry is stale
 # fallback = ["codex:mid"]            # tried when every scheduled provider's cap is out
-# prompt = "Extra per-iteration instructions appended to the standard prompt."
 # mcp_extra = "mcp/example-worker.json"  # additional MCP servers for this loop's sessions
+#   Keep secrets out of an mcp_extra server's "env" block if the loop can run on codex:
+#   that adapter passes the whole MCP table on the command line, where any local user can
+#   read it with `ps`. Have such a server read its credential from a file or the keychain.
 
 # A mock loop — for testing Rev itself and verifying installs; no tokens.
 # [loops.smoke]

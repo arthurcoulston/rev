@@ -18,6 +18,16 @@ resilience as a user service (launchd/systemd). The current package is `0.1.0` a
 the MVP stage. Its automated floor includes build and integration tests, and independent review
 still gates acceptance. Rev has not declared the additional 1.0 gates.
 
+## What a loop session can do
+
+Every iteration is a full agent session started with the agent CLI's permission prompts and
+sandbox turned off — `claude --dangerously-skip-permissions`, or `codex exec
+--dangerously-bypass-approvals-and-sandbox`. Nothing stops to ask. The session runs unattended
+in the `cwd` its roster entry names, and from there it can read and write files, run commands,
+and reach whatever that user account reaches. Its only bounds are its constitution, that `cwd`,
+and the MCP servers the roster hands it. `rev service install` makes all of this start at login.
+Register a loop only for a folder and a workstream you would hand an unattended agent.
+
 ## The shape of it
 
 ```

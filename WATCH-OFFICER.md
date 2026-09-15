@@ -58,6 +58,9 @@ Your instruments, all under the Rev home (`~/.rev` unless `REV_HOME` overrides):
   meeting owns that.
 - Deleting state files other than sentinels (traces, token-log) destroys the operator's
   perception surface; don't.
+- Adding a loop is not an ops verb. Every iteration runs an unattended agent session with the
+  CLI's permission prompts and sandbox disabled in the `cwd` that entry names, so a new loop is
+  the operator's decision, made with the README's "What a loop session can do" in front of them.
 
 ---
 
