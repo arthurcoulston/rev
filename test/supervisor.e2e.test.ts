@@ -8,8 +8,13 @@ import { ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { HELMO_CLI as HELM_CLI, HELMO_SERVER } from './helmo.js';
-import { Store } from '../../helmo/src/store.js';
+import { HELMO_CLI as HELM_CLI, HELMO_SERVER, HELMO_STORE } from './helmo.js';
+
+// Loaded by path rather than by specifier so it follows REV_TEST_HELMO like
+// the rest of this suite's Helmo references. A written-out sibling path is
+// what broke this: it resolves only on a machine that has ../helmo, which is
+// the assumption REV_TEST_HELMO exists to remove (H-1400).
+const { Store } = await import(HELMO_STORE);
 
 const REV_CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 
