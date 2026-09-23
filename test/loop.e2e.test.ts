@@ -884,8 +884,11 @@ mock_cmd = 'echo no-disposition'
 `);
     const id = seedTicket(e, 'Silently declined work');
     for (let n = 0; n < 3; n += 1) rev(e, ['run', 'decline-loop', '--count', '1']);
-    let ticket = helm(e, ['get', id]) as { needs_human: boolean };
+    // The line, not just the flag: a bare marker is what helmo refuses, and
+    // asserting only the boolean is what let the quarantine go quiet (H-1782).
+    let ticket = helm(e, ['get', id]) as { needs_human: boolean; sitting: string };
     expect(ticket.needs_human).toBe(true);
+    expect(ticket.sitting).toContain("loop 'decline-loop' declined three times unchanged");
     let escalations = (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: { title: string }[] }).tickets;
     expect(escalations.filter((t) => t.title.includes('silently declined')).length).toBe(1);
     const events = readFileSync(join(e.home, 'state', 'decline-loop', 'events.log'), 'utf8');
@@ -894,8 +897,9 @@ mock_cmd = 'echo no-disposition'
 
     helm(e, ['update', '--ticket', id, '--note', 'release for replay proof', '--no-needs-human']);
     rev(e, ['run', 'decline-loop', '--count', '1']);
-    ticket = helm(e, ['get', id]) as { needs_human: boolean };
+    ticket = helm(e, ['get', id]) as { needs_human: boolean; sitting: string };
     expect(ticket.needs_human).toBe(true);
+    expect(ticket.sitting).toContain("loop 'decline-loop' declined three times unchanged");
     escalations = (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: { title: string }[] }).tickets;
     expect(escalations.filter((t) => t.title.includes('silently declined')).length).toBe(1);
   });
@@ -907,7 +911,7 @@ cwd = "/tmp"
 runtime = "mock"
 mock_cmd = '''
 ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
-node ${HELM_CLI} update --ticket $ID --note "requires a human sitting" --needs-human
+node ${HELM_CLI} update --ticket $ID --note "requires a human sitting" --needs-human "Read this ticket with me and say where it should go — about five minutes"
 '''
 `);
     seedTicket(e, 'Disposed work');

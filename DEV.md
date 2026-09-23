@@ -63,7 +63,8 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   scoped seat, Rev snapshots ready IDs around each clean, unproductive pass and
   keeps a per-ticket streak in `.silent_decline_streaks.json`; the third pass
   creates one deduplicated human escalation and quarantines those tickets with
-  `needs_human`, without halting the rest of the seat. Any advancing work, or a
+  `needs_human`, carrying the one line the sitting needs — Helmo refuses a bare
+  marker — without halting the rest of the seat. Any advancing work, or a
   ticket leaving the ready set, resets its streak. Store-wide `'*'` loops are
   excluded: their job is judgment, and a recorded disposition is the action.
   An IDLE sentinel keeps the wake cursor on its first line and a bounded reason

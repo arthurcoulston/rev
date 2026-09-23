@@ -319,6 +319,10 @@ export function escalateSilentDeclines(g: GlobalConfig, l: LoopConfig, ids: stri
     standing = (run(g, ['create', '--title', silentDeclineTitle(l), '--body', `Rev observed three consecutive passes in which loop '${l.name}' left these ready tickets unchanged: ${ids.join(', ')}. The tickets are quarantined for a human sitting; the seat continues running.`, '--workstream', g.escalation_workstream, '--type', 'ops', '--priority', '1'], revActor()) as { id: string }).id;
     run(g, ['return', '--ticket', standing, '--situation', `Loop '${l.name}' left ready tickets ${ids.join(', ')} unchanged for three consecutive passes. Rev quarantined them instead of halting the seat.`, '--question', 'Should these tickets be rerouted, clarified, or released back to the seat?', '--recommendation', 'inspect the named tickets and the loop trace, then release only those whose next action is explicit', '--if-unanswered', 'The named tickets remain withheld from agent queues; the rest of the seat continues running.'], revActor());
   }
-  for (const id of ids) run(g, ['update', '--ticket', id, '--note', `Rev quarantined this ticket after loop '${l.name}' left it ready and unchanged for three consecutive passes; escalation ${standing}.`, '--needs-human'], revActor());
+  // The marker carries the line the sitting needs (helmo H-1761). A bare
+  // `--needs-human` reads the slot after itself, so it arrived as no value at
+  // all and the quarantine silently stopped marking anything (H-1782).
+  const sitting = `Decide what to do with a ticket loop '${l.name}' declined three times unchanged: read it and route it, cancel it, or answer what it is waiting on — a few minutes.`;
+  for (const id of ids) run(g, ['update', '--ticket', id, '--note', `Rev quarantined this ticket after loop '${l.name}' left it ready and unchanged for three consecutive passes; escalation ${standing}.`, '--needs-human', sitting], revActor());
   return standing;
 }
