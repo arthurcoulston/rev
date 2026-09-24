@@ -3,7 +3,7 @@ import { codexArgs, codexMcpArg, notionalCost, parseCodexEvents, runSession, ses
 import type { GlobalConfig, LoopConfig } from '../src/types.js';
 import { parse } from 'smol-toml';
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -59,6 +59,31 @@ describe('notionalCost (H-479)', () => {
   });
   it('no price table means no cost — the burn breaker stays honest about not knowing', () => {
     expect(notionalCost({ input: 100, cached: 0, output: 10 }, undefined)).toBeUndefined();
+  });
+});
+
+describe('selected runtime metering (H-1903)', () => {
+  it.each([false, true])('records Claude under a Codex-default rotating loop (is_error=%s)', (isError) => {
+    const home = mkdtempSync(join(tmpdir(), 'rev-runtime-'));
+    const bin = join(home, 'bin');
+    const constitution = join(home, 'PROFILE.md');
+    execFileSync('mkdir', ['-p', bin]);
+    writeFileSync(constitution, 'test constitution');
+    writeFileSync(join(bin, 'claude'), `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({ usage: { input_tokens: 3, output_tokens: 4 }, total_cost_usd: 0.1, result: 'done', is_error: isError })}'\n`);
+    chmodSync(join(bin, 'claude'), 0o755);
+    const beforePath = process.env['PATH'];
+    const beforeHome = process.env['REV_HOME'];
+    process.env['PATH'] = `${bin}:${beforePath}`;
+    process.env['REV_HOME'] = home;
+    try {
+      const loop = { name: 'rotating', runtime: 'codex', model: 'm', version: '0', cwd: home, constitution } as LoopConfig;
+      const result = runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'claude-model', { runtime: 'claude' });
+      expect(result.rc).toBe(isError ? 1 : 0);
+      expect(readFileSync(join(home, 'token-log'), 'utf8')).toContain('runtime=claude model=claude-model');
+    } finally {
+      process.env['PATH'] = beforePath;
+      if (beforeHome === undefined) delete process.env['REV_HOME']; else process.env['REV_HOME'] = beforeHome;
+    }
   });
 });
 

@@ -10,7 +10,7 @@ import { selectRun } from './routing.js';
 import { runLoop } from './loop.js';
 import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall } from './service.js';
 import { readRedeploy, requestRedeploy, watchRedeploy } from './redeploy.js';
-import { logEvent, pidAlive, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
+import { logEvent, pidAlive, processObservation, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
 import { runFleet } from './supervisor.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -66,13 +66,15 @@ function knownLoop(name: string): string {
 }
 
 function state(name: string): string {
-  const pid = pidAlive(name);
+  const observation = processObservation(name);
+  const pid = observation.pid;
   if (sHas(name, 'STOP')) return 'STOP';
   if (sHas(name, 'HOLD')) return 'HOLD';
   if (sHas(name, 'BLOCKED')) return 'BLOCKED';
   // Above LIMIT/IDLE/RUNNING: a wedged loop looks busy from the outside
   // (its process is alive, polling) while drawing no work at all (H-448).
   if (sHas(name, 'WEDGED')) return 'WEDGED';
+  if (observation.state === 'unknown') return 'UNKNOWN';
   if (!pid && sHas(name, 'BACKOFF')) return 'BACKOFF';
   if (pid && sHas(name, 'LIMIT')) return 'LIMIT';
   if (pid && sHas(name, 'PARKED')) return 'PARKED';
@@ -138,8 +140,9 @@ switch (cmd) {
     break;
   }
   case 'status': {
-    const sup = pidAlive('supervisor');
-    console.log(`supervisor: ${sup ? `running (pid ${sup})` : 'down — start the machine with: rev run'}`);
+    const supervisor = processObservation('supervisor');
+    const sup = supervisor.pid;
+    console.log(`supervisor: ${supervisor.state === 'unknown' ? `unobservable (recorded pid ${sup}; process inspection unavailable)` : sup ? `running (pid ${sup})` : 'down — start the machine with: rev run'}`);
     console.log(usageLine(readUsage(), 'Claude'));
     console.log(`${usageLine(readCodexUsage(), 'Codex')}\n`);
     console.log('LOOP                     STATE      PID     PACE   WORKSTREAM');
@@ -153,6 +156,7 @@ switch (cmd) {
     console.log('       WEDGED=alive but cannot reach Helm — drawing no work; see the loop trace');
     console.log('       LIMIT=waiting out a transient condition  BLOCKED=needs a human (see Helm queue)');
     console.log('       BACKOFF=crashed, supervisor retrying  STOP/HOLD=deliberate halts');
+    console.log('       UNKNOWN=process inspection unavailable; marker remains occupied, so no duplicate starts');
     console.log('       CRASHED=process gone, marker stale  halted=not started');
     break;
   }

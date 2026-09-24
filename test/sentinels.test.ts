@@ -9,7 +9,7 @@ import { join } from 'node:path';
 
 const home = mkdtempSync(join(tmpdir(), 'rev-sentinels-'));
 process.env.REV_HOME = home; // before the module reads it
-const { pidAlive, runningStamp } = await import('../src/sentinels.js');
+const { occupiedPid, pidAlive, processObservation, runningStamp } = await import('../src/sentinels.js');
 
 function marker(loop: string, contents: string): void {
   mkdirSync(join(home, 'state', loop), { recursive: true });
@@ -37,6 +37,18 @@ describe('pidAlive', () => {
   it('accepts the marker its own process just wrote', () => {
     marker('self', runningStamp());
     expect(pidAlive('self')).toBe(process.pid);
+  });
+
+  it('reports denied inspection as unknown and keeps the marker occupied', () => {
+    marker('hidden', runningStamp());
+    expect(processObservation('hidden', () => null)).toEqual({ state: 'unknown', pid: process.pid });
+    expect(pidAlive('hidden')).toBe(process.pid);
+    expect(occupiedPid('hidden', () => null)).toBe(process.pid);
+  });
+
+  it('distinguishes a reused pid from unavailable inspection', () => {
+    marker('reused', runningStamp());
+    expect(processObservation('reused', () => 'sleep 30')).toEqual({ state: 'dead', pid: null });
   });
 
   it('rejects a dead pid without consulting the command at all', () => {

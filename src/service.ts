@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_DRAIN_GRACE_SECONDS, revHome, stateDir } from './config.js';
-import { pidAlive } from './sentinels.js';
+import { processObservation } from './sentinels.js';
 
 export const LABEL = 'dev.rev';
 export const LAUNCHD_EXIT_TIMEOUT_SECONDS = 60;
@@ -147,6 +147,6 @@ export function serviceStart(): void {
 
 export function serviceStatusLine(): string {
   const { file } = serviceFile();
-  const pid = pidAlive('supervisor');
-  return `service file: ${existsSync(file) ? file : `not installed (${file})`}\nsupervisor:   ${pid ? `running (pid ${pid})` : 'down'}`;
+  const supervisor = processObservation('supervisor');
+  return `service file: ${existsSync(file) ? file : `not installed (${file})`}\nsupervisor:   ${supervisor.state === 'unknown' ? `unobservable (recorded pid ${supervisor.pid})` : supervisor.pid ? `running (pid ${supervisor.pid})` : 'down'}`;
 }

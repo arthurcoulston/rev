@@ -309,13 +309,13 @@ function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string
       // claude can exit 0 with is_error:true (e.g. auth failure) — never let
       // that pass as a clean iteration.
       if ((j as { is_error?: boolean }).is_error && res.status === 0) {
-        logTokens(l, model, tokens, cost);
+        logTokens(l, model, tokens, cost, 'claude');
         return { rc: 1, cls: 'failure', tokens, cost_usd: cost, outputTail: tail.slice(-4000) };
       }
     } catch {
       /* non-JSON output: keep raw tail */
     }
-    logTokens(l, model, tokens, cost);
+    logTokens(l, model, tokens, cost, 'claude');
     const rc = res.status ?? 1;
     return { rc, cls: rc === 0 ? 'ok' : 'failure', tokens, cost_usd: cost, outputTail: `${tail}\n${res.stderr ?? ''}`.slice(-4000) };
   } finally {

@@ -18,7 +18,7 @@ import { stateDir } from './config.js';
 import { respawnDecide } from './ladder.js';
 import { pollUsage } from './usage.js';
 import { rotateOpenFd } from './logretention.js';
-import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
+import { logEvent, occupiedPid, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
 import { endSessionGroup, sessionGroupsOf } from './shim.js';
 import { REDEPLOY_EXIT, RedeployRequest, armRedeployWatch, readRedeploy, reportRedeployLanded } from './redeploy.js';
 import { answeredResumeEscalation, completeAnsweredResume, failAnsweredResume } from './helm.js';
@@ -43,7 +43,7 @@ function halted(name: string): boolean {
 /** Resolves with the process exit code: 0 for a drain that should stay down,
  *  REDEPLOY_EXIT for one the service manager must bring back (H-1046). */
 export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Promise<number> {
-  const existing = pidAlive(SUP);
+  const existing = occupiedPid(SUP);
   if (existing) {
     throw new Error(`A supervisor is already running (PID ${existing}). Check: rev status`);
   }
@@ -234,7 +234,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
             continue;
           }
           launch(s);
-        } else if (!halted(name) && !pidAlive(name)) {
+        } else if (!halted(name) && !occupiedPid(name)) {
           // Sentinels cleared (rev resume), or a foreign process died: take it.
           s.restartStreak = 0;
           launch(s);
@@ -268,7 +268,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
     for (const cfg of Object.values(loops)) {
       const slot: Slot = { cfg, child: null, fd: null, startedAt: 0, restartStreak: 0, respawnAt: null, resumeTicket: null };
       slots.set(cfg.name, slot);
-      const foreign = pidAlive(cfg.name);
+      const foreign = occupiedPid(cfg.name);
       if (foreign) {
         console.log(`rev: loop '${cfg.name}' already running outside the supervisor (pid ${foreign}) — leaving it alone; will adopt if it exits.`);
         logEvent(SUP, 'foreign', `loop=${cfg.name} pid=${foreign}`);

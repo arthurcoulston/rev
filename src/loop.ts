@@ -8,7 +8,7 @@ import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage
 import { choiceExhausted, selectRun } from './routing.js';
 import { raiseWedgeAlarm, wedgeDecide } from './health.js';
 import { breakerDecide, declineDecide, ladderDecide, limitDecide, probeDecide, rollingMean, seatDecide, velocityToPause, wakeDecide } from './ladder.js';
-import { logEvent, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streak, streakMap, streakMapSet, streakReset } from './sentinels.js';
+import { logEvent, occupiedPid, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streak, streakMap, streakMapSet, streakReset } from './sentinels.js';
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig, RunChoice } from './types.js';
@@ -69,7 +69,7 @@ export interface RunOptions {
 export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions = {}): Promise<void> {
   const dir = stateDir(l.name);
 
-  const existing = pidAlive(l.name);
+  const existing = occupiedPid(l.name);
   if (existing) {
     throw new Error(`A '${l.name}' loop is already running (PID ${existing}). Check: rev status`);
   }

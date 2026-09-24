@@ -9,7 +9,7 @@ import { readCodexUsage, readUsage, usageLine, worstSeverity } from './usage.js'
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { revHome, loadRoster, stateDir, tokenLogPath } from './config.js';
-import { pidAlive, sGet, sHas } from './sentinels.js';
+import { pidAlive, processObservation, sGet, sHas } from './sentinels.js';
 
 const port = Number(process.env['REV_VIEW_PORT'] ?? 4500);
 const host = process.env['REV_VIEW_HOST'] ?? '127.0.0.1';
@@ -73,11 +73,13 @@ function actor(name: string): string {
 }
 
 function state(name: string): string {
-  const pid = pidAlive(name);
+  const observation = processObservation(name);
+  const pid = observation.pid;
   if (sHas(name, 'STOP')) return 'STOP';
   if (sHas(name, 'HOLD')) return 'HOLD';
   if (sHas(name, 'BLOCKED')) return 'BLOCKED';
   if (sHas(name, 'WEDGED')) return 'WEDGED';
+  if (observation.state === 'unknown') return 'UNKNOWN';
   if (!pid && sHas(name, 'BACKOFF')) return 'BACKOFF';
   if (pid && sHas(name, 'LIMIT')) return 'LIMIT';
   if (pid && sHas(name, 'PARKED')) return 'PARKED';
@@ -116,9 +118,11 @@ createServer((req, res) => {
   // — so consumers read this instead of re-deriving it from the markers.
   if (req.url === '/health.json') {
     const { loops } = loadRoster();
+    const supervisor = processObservation('supervisor');
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
-      supervisor: pidAlive('supervisor') || null,
+      supervisor: supervisor.pid,
+      supervisor_state: supervisor.state,
       loops: Object.values(loops).map((l) => {
         const st = state(l.name);
         const reason = st === 'IDLE'
@@ -225,7 +229,7 @@ ${ESTATE_TOKENS}
     h1 .title-line { min-width: 0; overflow-wrap: anywhere; color: var(--ink-3); font-weight: normal; font-size: 15px; }
   </style></head><body>
   ${ESTATE_AVATARS}
-  <h1 data-refresh="title">Rev <span class="title-line">the machine, read-only · supervisor ${pidAlive('supervisor') ? `running (pid ${pidAlive('supervisor')})` : 'down'} · home ${esc(revHome())} · work lives in ${reachLink('helmo-view', 'Helm')}</span></h1>
+  <h1 data-refresh="title">Rev <span class="title-line">the machine, read-only · supervisor ${processObservation('supervisor').state === 'unknown' ? `unobservable (recorded pid ${processObservation('supervisor').pid})` : pidAlive('supervisor') ? `running (pid ${pidAlive('supervisor')})` : 'down'} · home ${esc(revHome())} · work lives in ${reachLink('helmo-view', 'Helm')}</span></h1>
   <p class="usage ${worstSeverity(readUsage())}" data-refresh="claude">${esc(usageLine(readUsage(), 'Claude'))}</p>
   <p class="usage ${worstSeverity(readCodexUsage())}" data-refresh="codex">${esc(usageLine(readCodexUsage(), 'Codex'))}</p>
   <div class="tablewrap" tabindex="0" role="region" aria-label="Loop status" data-refresh="loops"><table><tr><th>Loop</th><th>State</th><th>Workstream</th><th>Runtime</th><th>Pace</th><th>Spend</th><th>Recent trace</th></tr>

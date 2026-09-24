@@ -120,6 +120,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   is what a wedged loop cannot reach — so it leaves by another door
   (`osascript` notification on darwin, best-effort, never fatal). Raised once
   per episode; the sentinel clears the moment a wake-check succeeds.
+- `sentinels.ts` — process identity is three-state. A missing or mismatched
+  process is dead; a matching command is alive; unavailable process inspection
+  is `unknown`, shown that way by status surfaces while conservatively keeping
+  the RUNNING marker occupied so a restricted observer cannot start a duplicate.
 - `burn.ts` — reads the token-log back as a per-loop rolling window (hour and
   day) for the breaker. A file scan, not an in-memory total, because the two
   burns it exists for both spanned process restarts; the window is floored at

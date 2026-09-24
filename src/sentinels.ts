@@ -100,34 +100,48 @@ function ownCommand(): string {
 }
 
 // -ww so a long invocation is never truncated into a false mismatch. An empty
-// answer (no such process, or no ps at all) reads as "not provably ours": the
-// bias is deliberate, because a false 'alive' wedges the machine permanently
-// while a false 'dead' is caught by the next start writing a fresh marker.
-function liveCommand(pid: number): string {
+// A missing process and unavailable inspection are different observations:
+// callers may report or refuse the latter, but must never treat it as authority
+// to signal the pid or start a second owner over the marker.
+function liveCommand(pid: number): string | null {
   try {
     return execFileSync('ps', ['-ww', '-p', String(pid), '-o', 'command='], { encoding: 'utf8' }).trim();
   } catch {
-    return '';
+    return null;
   }
 }
 
-export function pidAlive(loop: string): number | null {
+export type ProcessObservation = { state: 'alive' | 'unknown'; pid: number } | { state: 'dead'; pid: null };
+
+export function processObservation(loop: string, inspect: (pid: number) => string | null = liveCommand): ProcessObservation {
   const running = sGet(loop, 'RUNNING');
-  if (!running) return null;
+  if (!running) return { state: 'dead', pid: null };
   const lines = running.split('\n');
   const pid = parseInt(lines[0] ?? '', 10);
-  if (!pid) return null;
+  if (!pid) return { state: 'dead', pid: null };
   try {
     process.kill(pid, 0); // gone, or not ours to signal: settled, no ps needed
   } catch {
-    return null;
+    return { state: 'dead', pid: null };
   }
   const cmd = lines.find((l) => l.startsWith('cmd '))?.slice(4).trim();
   // A marker predating this format can only be trusted by pid, as before; the
   // next start of that process writes one carrying its command.
-  if (!cmd) return pid;
-  const live = liveCommand(pid);
+  if (!cmd) return { state: 'alive', pid };
+  const live = inspect(pid);
+  if (live === null) return { state: 'unknown', pid };
   // Anchored at the end so the supervisor's 'cli.js run' cannot match a loop's
   // 'cli.js run ward' if its pid is recycled to one.
-  return live === cmd || live.endsWith(` ${cmd}`) ? pid : null;
+  return live === cmd || live.endsWith(` ${cmd}`) ? { state: 'alive', pid } : { state: 'dead', pid: null };
+}
+
+export function pidAlive(loop: string): number | null {
+  const observation = processObservation(loop);
+  return observation.state === 'alive' ? observation.pid : null;
+}
+
+/** Startup/supervision check: unknown inspection keeps the marker occupied,
+ * while pidAlive deliberately refuses to authorize signalling that pid. */
+export function occupiedPid(loop: string, inspect?: (pid: number) => string | null): number | null {
+  return processObservation(loop, inspect).pid;
 }
