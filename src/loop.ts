@@ -350,6 +350,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       failCap: g.fail_cap,
       limitCap: g.limit_cap,
       limitWait: g.limit_wait_seconds,
+      storeWide: l.workstream === '*',
     });
     logEvent(l.name, 'run-end', `iter=${i} rc=${res.rc} class=${res.cls} produced=${produced} dur=${durSec}s action=${action.act}`);
 
@@ -523,7 +524,9 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         const cursor = after?.max_seq ?? before.max_seq;
         const ready = after?.ready_count ?? before.ready_count;
         const held = after?.held_count ?? before.held_count ?? 0;
-        const reason = ready > 0
+        const reason = produced
+          ? 'store-wide pass complete; waiting for motion from someone else'
+          : ready > 0
           ? `${ready} executable ticket${ready === 1 ? '' : 's'} remained after an iteration made no advancing change`
           : held > 0
             ? `${held} ticket${held === 1 ? ' remains' : 's remain'} in this seat's hands, but none is executable`
@@ -533,7 +536,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         // back into Helmo and waking the same seat again (H-954).
         sSet(l.name, 'IDLE', `${cursor}\n${reason}\n`);
         sSet(l.name, 'IDLE_AT', String(Date.now()));
-        console.log(`rev: no production this iteration — IDLE at seq ${cursor}: ${reason}.`);
+        console.log(`rev: ${produced ? 'pass complete' : 'no production this iteration'} — IDLE at seq ${cursor}: ${reason}.`);
         break;
       }
       case 'continue':

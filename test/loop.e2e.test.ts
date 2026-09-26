@@ -962,7 +962,9 @@ fi
 `);
     // Work lives in a workstream no loop is scoped to: only a '*' loop sees it.
     const id = (helm(e, ['create', '--title', 'Filed far away', '--body', 'x', '--workstream', 'elsewhere', '--type', 'ops']) as { id: string }).id;
-    const out = rev(e, ['run', 'judge', '--count', '2']);
+    // One pass: a store-wide loop idles after a clean pass even when it
+    // produced, and waits for someone else's motion (H-2164).
+    const out = rev(e, ['run', 'judge', '--count', '1']);
     expect(out).toContain("PROMPT:This is a Rev loop iteration, not a summon; AGENTS.md's summon clause does not apply; the queue is the work.");
     expect(out).toContain('across all workstreams'); // the wildcard prompt, not a stream's
     expect(out).toContain('file children that each fit one iteration and close the parent as a plan');
@@ -970,6 +972,7 @@ fi
     expect(out).toContain('For this store-wide sweep, a disposition note is action');
     expect((helm(e, ['get', id]) as { status: string }).status).toBe('done');
     expect(existsSync(join(e.home, 'state', 'judge', 'IDLE'))).toBe(true);
+    expect(readFileSync(join(e.home, 'state', 'judge', 'events.log'), 'utf8')).toMatch(/produced=true .*action=idle/);
   });
 
   it("store-wide loop ('*', H-92) wakes on motion only — standing backlog never wakes it", async () => {

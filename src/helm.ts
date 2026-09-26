@@ -207,13 +207,20 @@ export function answeredResumeEscalation(g: GlobalConfig, l: LoopConfig): string
     (choice === 'resume' || choice?.startsWith('resume —')) ? id : null;
 }
 
-export function completeAnsweredResume(g: GlobalConfig, ticketId: string, runningPath: string): void {
+/** Closes the escalation once the resumed loop has stayed up. Returns false
+ *  when someone already closed it — an agent reading the answer can beat the
+ *  min-uptime check, and Helmo refuses every write to a terminal ticket, so
+ *  retrying would fail every poll forever (H-2164). */
+export function completeAnsweredResume(g: GlobalConfig, ticketId: string, runningPath: string): boolean {
+  const status = ticketStatus(g, ticketId);
+  if (status === 'done' || status === 'cancelled') return false;
   run(g, [
     'update', '--ticket', ticketId,
     '--note', 'Rev applied the human resume answer; the supervisor restarted the loop and confirmed it stayed running.',
     '--status', 'done', '--confidence', 'routine',
     '--evidence-kind', 'file', '--evidence-ref', runningPath,
   ], revActor());
+  return true;
 }
 
 export function failAnsweredResume(g: GlobalConfig, l: LoopConfig, ticketId: string, detail: string): void {

@@ -241,6 +241,46 @@ node ${HELM_CLI} update --ticket $ID --note "kept producing" --evidence-kind oth
     }
   });
 
+  it('stops completing a resume once another agent has already closed its escalation (H-2164)', { timeout: 60000 }, async () => {
+    const e = setup(`[loops.closed-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+continue_cap = 1
+mock_cmd = '''
+if [ -f "$REV_HOME/resume-succeeds" ]; then exit 0; fi
+ID=$(node ${HELM_CLI} list --assignee closed-loop --status in_progress --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -z "$ID" ]; then
+  ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+  node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
+fi
+node ${HELM_CLI} update --ticket $ID --note "kept producing" --evidence-kind other --evidence-ref burn
+'''
+`, '', 6);
+    helm(e, ['create', '--title', 'work that burns', '--body', 'x', '--workstream', 'rev-test', '--type', 'ops']);
+    const { proc } = startFleet(e);
+    const events = () => readFileSync(join(e.home, 'state', 'closed-loop', 'events.log'), 'utf8');
+    try {
+      await waitFor(() => (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets.length === 1, 'burn breaker escalation');
+      const escalation = (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: { id: string }[] }).tickets[0]!;
+      writeFileSync(join(e.home, 'resume-succeeds'), '');
+      answerResume(e, escalation.id);
+      await waitFor(() => /answer-resume/.test(events()), 'answered loop restarted');
+
+      // A sweeping agent reads the answer and closes the escalation inside
+      // the min-uptime window, before the supervisor gets to.
+      helm(e, ['update', '--ticket', escalation.id, '--note', 'closed by a sweep', '--status', 'done', '--evidence-kind', 'other', '--evidence-ref', 'x'],
+        '{"name":"sweeper","kind":"agent","model":"t","version":"0"}');
+
+      await waitFor(() => /resume-complete.*already closed/.test(events()), 'completion stands down');
+      await sleep(3000); // several polls: it must not keep retrying
+      expect(events()).not.toMatch(/resume-completion-failed/);
+      expect(events().match(/resume-complete/g)).toHaveLength(1);
+    } finally {
+      proc.kill('SIGKILL');
+    }
+  });
+
   it('leaves a blocked loop down when the dashboard answer chooses investigate (H-1320)', { timeout: 60000 }, async () => {
     const e = setup(`[loops.investigate-loop]
 workstream = "rev-test"

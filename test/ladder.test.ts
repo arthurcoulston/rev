@@ -18,6 +18,10 @@ describe('ladderDecide', () => {
     expect(ladderDecide('ok', base).act).toBe('continue');
     expect(ladderDecide('ok', { ...base, produced: false }).act).toBe('idle');
   });
+  it('a store-wide loop idles after a clean pass even when it produced (H-2164)', () => {
+    expect(ladderDecide('ok', { ...base, storeWide: true }).act).toBe('idle');
+    expect(ladderDecide('failure', { ...base, storeWide: true, failStreak: 1 }).act).toBe('continue');
+  });
   it('transient parks with the wait, never fails, until the cap', () => {
     const a = ladderDecide('transient', { ...base, limitStreak: 1 });
     expect(a).toEqual({ act: 'limit_wait', waitSeconds: 900, attempt: 1 });

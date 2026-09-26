@@ -39,7 +39,13 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   motion accumulates but cannot re-wake the loop until the floor elapses
   (H-336: a live desk session woke ward ~$1/2min against an empty queue;
   H-545: bosun's own sweep records were the motion that woke it, 16 straight
-  iterations to the burn breaker). Motion is still what wakes a store-wide
+  iterations to the burn breaker). A store-wide loop also idles after a
+  *productive* clean pass, with its cursor past its own writes: the floor
+  only ever gated wakes, and a produced pass used to `continue` straight
+  into the next one, so bosun's pass-closing sweep record, which drew a
+  done_without_evidence finding that the next pass disposed of, ran it back to back
+  at ~$0.40 a pass (H-2164). One sweep covers the whole store; only someone
+  else's motion justifies another. Motion is still what wakes a store-wide
   loop, so the floor is still what caps its burn. A scoped loop no longer
   needs one: it wakes on a readiness edge, and work newly ready for the seat
   is by definition not the churn the floor was built to absorb. The key is
@@ -157,7 +163,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   tools need `default_tools_approval_mode = "auto"` AND the
   approvals/sandbox bypass or every call hard-fails under `approval_policy =
   never`; exit 0 without a `turn.completed` event is a real failure
-  (openai/codex #19309), so results are gated on the event stream; codex under
+  (openai/codex #19309), so results are gated on the event stream, and a
+  failed run's tail carries a `rev: codex failed — exit N, turn …, error
+  event: …` line even when the agent sent a final message, which used to
+  hide the reason entirely (H-2164); codex under
   plan auth reports no dollar cost, so cost is notional from the roster's
   `[providers.codex.prices]` — absent prices, the burn breaker is blind to
   that provider and the token-log shows `cost_usd=?`.
@@ -335,7 +344,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   and the case passed; loaded, liveness won, the resume was recorded healthy,
   and the failure return the case asserts never came. The cure was fixture
   shape, not budget: that case sets `min_uptime_seconds = 20` and now passes
-  at three times the load that broke it (H-1419). So when a case is red only
+  at three times the load that broke it (H-1419). The healthy path can also
+  lose the race to an agent: bosun closed H-2152 from the answer before the
+  supervisor's min-uptime check, and Helmo refuses every write to a terminal
+  ticket, so completion retried and failed every poll for as long as the
+  supervisor ran. `completeAnsweredResume` now reads the status first and stands down
+  on a closed escalation (H-2164). So when a case is red only
   under load, ask first whether it is waiting on something slow or racing
   something fast. A timeout raised on a race only buys a longer red.
 - `node dist/cli.js routing` previews working-model selection without starting

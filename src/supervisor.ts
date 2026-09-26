@@ -21,7 +21,7 @@ import { rotateOpenFd } from './logretention.js';
 import { logEvent, occupiedPid, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
 import { endSessionGroup, sessionGroupsOf } from './shim.js';
 import { REDEPLOY_EXIT, RedeployRequest, armRedeployWatch, readRedeploy, reportRedeployLanded } from './redeploy.js';
-import { answeredResumeEscalation, completeAnsweredResume, failAnsweredResume } from './helm.js';
+import { answeredResumeEscalation, completeAnsweredResume, failAnsweredResume, cliError } from './helm.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 
 const SUP = 'supervisor';
@@ -202,11 +202,11 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
         if (s.child && s.resumeTicket && Date.now() - s.startedAt >= g.min_uptime_seconds * 1000) {
           const ticket = s.resumeTicket;
           try {
-            completeAnsweredResume(g, ticket, join(stateDir(s.cfg.name), 'RUNNING'));
+            const closed = completeAnsweredResume(g, ticket, join(stateDir(s.cfg.name), 'RUNNING'));
             s.resumeTicket = null;
-            logEvent(s.cfg.name, 'resume-complete', `ticket=${ticket}`);
+            logEvent(s.cfg.name, 'resume-complete', `ticket=${ticket}${closed ? '' : ' already closed by someone else'}`);
           } catch (e) {
-            logEvent(s.cfg.name, 'resume-completion-failed', `ticket=${ticket} ${String(e).slice(0, 200)}`);
+            logEvent(s.cfg.name, 'resume-completion-failed', `ticket=${ticket} ${cliError(e).slice(0, 200)}`);
           }
         }
         if (s.child || shuttingDown) continue;

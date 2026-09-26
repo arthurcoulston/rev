@@ -25,11 +25,15 @@ export type LadderAction =
 
 export function ladderDecide(
   cls: ExitClass,
-  opts: { produced: boolean; failStreak: number; limitStreak: number; failCap: number; limitCap: number; limitWait: number },
+  opts: { produced: boolean; failStreak: number; limitStreak: number; failCap: number; limitCap: number; limitWait: number; storeWide?: boolean },
 ): LadderAction {
   switch (cls) {
     case 'ok':
-      return opts.produced ? { act: 'continue' } : { act: 'idle' };
+      // A store-wide pass judges the whole store, so a productive one leaves
+      // nothing for an immediate second pass — only someone else's motion
+      // does. Continuing let bosun's own sweep record fund the next sweep,
+      // back to back and under the idle floor (H-2164).
+      return opts.produced && !opts.storeWide ? { act: 'continue' } : { act: 'idle' };
     case 'transient':
       if (opts.limitStreak > opts.limitCap) {
         return { act: 'blocked', reason: `transient-condition cap exceeded (${opts.limitStreak} consecutive waits) — beyond any session window, needs a human look` };

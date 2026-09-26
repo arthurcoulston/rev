@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { codexArgs, codexMcpArg, notionalCost, parseCodexEvents, runSession, sessionEnv, sessionSpec, systemPrompt, tomlString } from '../src/shim.js';
+import { codexArgs, codexFailureLine, codexMcpArg, notionalCost, parseCodexEvents, runSession, sessionEnv, sessionSpec, systemPrompt, tomlString } from '../src/shim.js';
 import type { GlobalConfig, LoopConfig } from '../src/types.js';
 import { parse } from 'smol-toml';
 import { execFileSync, spawn } from 'node:child_process';
@@ -39,6 +39,16 @@ describe('parseCodexEvents (H-479)', () => {
       EVENTS + '\n{"type":"turn.failed","error":{"message":"Rate limit exceeded: weekly cap, resets 2026-09-03T09:38:26Z"}}',
     );
     expect(run.failure).toContain('resets 2026-09-03');
+  });
+
+  it('names why a run failed even when the agent sent a final message (H-2164)', () => {
+    const run = parseCodexEvents(EVENTS + '\n{"type":"error","message":"stream disconnected before completion"}');
+    expect(run.tail).toBe('H-1 done');
+    const line = codexFailureLine(0, run);
+    expect(line).toContain('exit 0');
+    expect(line).toContain('turn completed');
+    expect(line).toContain('stream disconnected before completion');
+    expect(codexFailureLine(1, parseCodexEvents(EVENTS))).toMatch(/exit 1, turn completed\n$/);
   });
 
   it('skips non-JSON lines rather than throwing', () => {

@@ -398,6 +398,13 @@ export function codexArgs(model: string, mcpArg: string, config?: Record<string,
   ];
 }
 
+/** Why Rev failed a codex run, in one line: the exit status, whether the turn
+ *  completed, and codex's own error event when there was one. */
+export function codexFailureLine(status: number | null, run: CodexRun): string {
+  return `rev: codex failed — exit ${status ?? 'none'}, turn ${run.turnCompleted ? 'completed' : 'not completed'}` +
+    (run.failure ? `, error event: ${run.failure.slice(0, 500)}` : '') + '\n';
+}
+
 function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, choice?: RunChoice): SessionResult {
   // Same contract as runClaude, codex's way: prompt via stdin (a constitution
   // in argv is world-readable via ps and bumps into argv limits), MCP via the
@@ -432,10 +439,13 @@ function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string,
     return { rc: 75, cls: 'transient', limit: { status: 429, message }, tokens, cost_usd: cost, outputTail: `API limit: ${message}` };
   }
 
-  const tail = `${run.tail || run.failure || ''}\n${res.stderr ?? ''}`.slice(-4000);
   // rc 0 without a completed turn is a documented codex wart (openai/codex
   // #19309): treat it as the failure it is.
   const rc = res.status === 0 && (!run.turnCompleted || run.failure) ? 1 : (res.status ?? 1);
+  // A failing run that still sent an agent message used to show only that
+  // message, so the reason Rev failed it was unrecoverable (H-2164).
+  const why = rc === 0 ? '' : codexFailureLine(res.status, run);
+  const tail = `${run.tail || run.failure || ''}\n${why}${res.stderr ?? ''}`.slice(-4000);
   return { rc, cls: rc === 0 ? 'ok' : 'failure', tokens, cost_usd: cost, outputTail: tail };
 }
 
