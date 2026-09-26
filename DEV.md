@@ -278,7 +278,20 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   iteration held it to 02:28:54Z, fleet back 160ms later.
 - `service.ts` — reboot resilience: launchd plist (KeepAlive on crash only —
   a drain exits 0 and stays down) / systemd user unit. Units embed
-  install-time PATH and REV_HOME because service managers strip env. Both must
+  install-time PATH and REV_HOME because service managers strip env.
+  **The service identity follows the Rev home** (`serviceLabel()`,
+  `systemdUnitName()`, H-2210). It was the constant `dev.rev`, and that one
+  string is also the plist filename and the bootout/kickstart address — so two
+  fleets under one login fought over one job and one file, and the second
+  install silently replaced the first. The derivation strips a leading `.` and
+  a leading `rev` from the home's basename: `~/.rev` → `dev.rev` (unchanged, so
+  an existing install is untouched — and it must hold whether `REV_HOME` is
+  unset or explicitly the default, because the installed plist exports
+  `REV_HOME=~/.rev` back to the process); `~/.rev-gp` → `dev.rev.gp` and
+  systemd `rev-gp`. `REV_LABEL` overrides it outright, which is the escape when
+  two homes share a basename. The label is a parameter of `launchdPlist` and
+  `installLaunchd` rather than a module constant, so the plist a call writes and
+  the job it boots out can never disagree.
   systemd gets `KillMode=mixed` and a timeout longer than rev's drain, so a stop
   signals the supervisor rather than every process in the cgroup (H-467).
   launchd is different: it clamps `ExitTimeOut` at 60s even when the plist asks
