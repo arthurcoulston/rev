@@ -82,6 +82,16 @@ describe('streamed child output (H-387)', () => {
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(23);
   });
+
+  it.each(['stdout', 'stderr'] as const)('bounds %s overflow and terminates the child', async (stream) => {
+    const script = `const b=Buffer.alloc(1024*1024); for(let i=0;i<129;i++) process.${stream}.write(b); setInterval(()=>{},1000)`;
+    const result = await spawnSession(process.execPath, ['-e', script], { cwd: '/tmp', env: process.env });
+    expect(result.error).toBeUndefined();
+    expect(result.overflow).toBe(stream);
+    expect(Buffer.byteLength(result[stream])).toBeLessThanOrEqual(128 * 1024 * 1024);
+    expect(result.signal).toBe('SIGTERM');
+    expect(() => process.kill(result.pid!, 0)).toThrow();
+  }, 30_000);
 });
 
 describe('notionalCost (H-479)', () => {
