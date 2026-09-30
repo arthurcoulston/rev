@@ -80,9 +80,11 @@ const GLOBAL_DEFAULTS = {
   // Calibrated against 597 rolling windows of this fleet's token-log: a cost
   // multiple of 4 would have tripped 23 times, 5 seven times, 6 twice. See
   // capacity.ts for why the axis is cost rather than tokens, and why the
-  // multiple carries an absolute floor beneath it.
+  // multiple carries an absolute floor beneath it. The floor is above all
+  // three confirmed cheap-pass -> substantive-build false stops ($1.71,
+  // $2.30, $2.55), while the historical $5.17 blowout still trips.
   anomaly_rate_multiple: 6,
-  anomaly_min_usd: 1.0,
+  anomaly_min_usd: 5.0,
   // No productive iteration has ever taken 10 percentage points of a plan
   // window: a whole week of one loop's work reached 65 points across roughly
   // 130 iterations, so 10 is about twenty times the observed per-iteration

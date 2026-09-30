@@ -211,7 +211,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   `anomalyDecide` measures a rate against the loop's own rolling mean, never a
   cumulative total. After a subscription run the loop compares its notional
   cost with the preceding five parseable iterations and refreshes the same plan
-  window to measure percentage-point movement. A trip writes both the halt
+  window to measure percentage-point movement. The cost-rate backstop applies
+  only at $5 or more: this clears the three confirmed $1.71-$2.55 transitions
+  from cheap queue passes to real builds while retaining the historical $5.17
+  blowout; the measured plan-point ceiling remains absolute. A trip writes both the halt
   sentinel and `BLOCKED.json` with the observed values, baseline, time and
   escalation ticket, which `/health.json` and the dashboard surface. An
   anomaly or terminal-capacity trip is assigned at priority 0 to the first
