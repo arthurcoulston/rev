@@ -222,6 +222,13 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   Astra additionally needs a current CLI: 0.150.1 was rejected by the server;
   Homebrew 0.153.2 passed a real Astra run on 2026-09-04 (H-892). Updating the
   desktop app alone does not update the CLI Rev invokes.
+
+  Real agent CLIs are spawned asynchronously and their pipes are drained as
+  they run (H-387). Retention is capped at 128 MiB per stream: crossing that
+  bound terminates and reports a resource failure, while launch errors retain
+  their OS code, nonzero exits remain child failures, and malformed/truncated
+  wire output is named rather than mistaken for a clean run. Rev never retries
+  any of these automatically because the session may already have acted.
   **Every session is its own process group** (`SESSION_GROUP`, H-467). Without
   it the agent CLI shares the group of the loop and the supervisor above it, so
   anything that signals that group — launchd stopping the job, systemd killing
