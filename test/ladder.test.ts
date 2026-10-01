@@ -291,27 +291,31 @@ describe('choiceDecide (H-479)', () => {
 });
 
 describe('seatDecide (H-558)', () => {
-  const seat = 'rev:ward';
+  const sessions = ['rev:ward'];
   const stale = 86400;
   it('an empty seat and its own mid-flight work both mean work', () => {
-    expect(seatDecide({ holds: [], seat, staleSeconds: stale }).act).toBe('work');
-    expect(seatDecide({ holds: [{ ticketId: 'H-1', claimSession: 'rev:ward', ageSeconds: 60 }], seat, staleSeconds: stale }).act).toBe('work');
+    expect(seatDecide({ holds: [], sessions, staleSeconds: stale }).act).toBe('work');
+    expect(seatDecide({ holds: [{ ticketId: 'H-1', claimSession: 'rev:ward', ageSeconds: 60 }], sessions, staleSeconds: stale }).act).toBe('work');
   });
   it('a fresh foreign hold stands the loop down, naming the ticket and holder', () => {
-    const r = seatDecide({ holds: [{ ticketId: 'H-2', claimSession: null, ageSeconds: 300 }], seat, staleSeconds: stale });
+    const r = seatDecide({ holds: [{ ticketId: 'H-2', claimSession: null, ageSeconds: 300 }], sessions, staleSeconds: stale });
     expect(r.act).toBe('stand_down');
     if (r.act === 'stand_down') expect(r.reason).toContain('H-2');
   });
   it('a stale or undatable foreign hold does not block — takeover territory, not a live session', () => {
-    expect(seatDecide({ holds: [{ ticketId: 'H-3', claimSession: 'desk', ageSeconds: stale + 1 }], seat, staleSeconds: stale }).act).toBe('work');
-    expect(seatDecide({ holds: [{ ticketId: 'H-4', claimSession: null, ageSeconds: null }], seat, staleSeconds: stale }).act).toBe('work');
+    expect(seatDecide({ holds: [{ ticketId: 'H-3', claimSession: 'desk', ageSeconds: stale + 1 }], sessions, staleSeconds: stale }).act).toBe('work');
+    expect(seatDecide({ holds: [{ ticketId: 'H-4', claimSession: null, ageSeconds: null }], sessions, staleSeconds: stale }).act).toBe('work');
   });
   it('one fresh foreign hold among own work is enough to stand down; 0 disables the guard', () => {
     const holds = [
       { ticketId: 'H-5', claimSession: 'rev:ward', ageSeconds: 60 },
       { ticketId: 'H-6', claimSession: 'rev:other', ageSeconds: 60 },
     ];
-    expect(seatDecide({ holds, seat, staleSeconds: stale }).act).toBe('stand_down');
-    expect(seatDecide({ holds, seat, staleSeconds: 0 }).act).toBe('work');
+    expect(seatDecide({ holds, sessions, staleSeconds: stale }).act).toBe('stand_down');
+    expect(seatDecide({ holds, sessions, staleSeconds: 0 }).act).toBe('work');
+  });
+  it('allows another supervised worker in the same accountable seat', () => {
+    const holds = [{ ticketId: 'H-7', claimSession: 'rev:ward-2', ageSeconds: 10 }];
+    expect(seatDecide({ holds, sessions: ['rev:ward', 'rev:ward-2'], staleSeconds: stale }).act).toBe('work');
   });
 });

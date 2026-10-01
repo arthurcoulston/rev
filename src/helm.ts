@@ -26,7 +26,7 @@ export function readyTicketIds(g: GlobalConfig, l: LoopConfig): string[] {
   const list = (args: string[]) => (run(g, ['list', '--ready', ...args, '--limit', '100'], loopActor(l)) as { tickets: { id: string }[] }).tickets;
   return [...new Set([
     ...list(['--workstream', l.workstream]),
-    ...list(['--assignee', l.name]),
+    ...list(['--assignee', seatName(l)]),
   ].map((t) => t.id))];
 }
 
@@ -60,13 +60,19 @@ export function seatId(l: LoopConfig): string {
   return `rev:${l.name}`;
 }
 
+/** Accountable role identity. The fallback keeps programmatic LoopConfig
+ * callers compatible with the pre-worker-pool shape. */
+export function seatName(l: LoopConfig): string {
+  return l.seat ?? l.name;
+}
+
 // The actor's model field is the model actually running the session — a probe
 // iteration on the small tier must not sign the record as the working model.
 // A session override is for a consumer that is NOT the loop: a meeting room
 // runs the seat's composed session but must not sign as `rev:<seat>`, or the
 // seat guard above reads a meeting's write as the loop's own hold (H-1152).
 export function loopActor(l: LoopConfig, model?: string, session?: string): object {
-  return { name: l.name, kind: 'agent', model: model ?? l.model, version: l.version, session: session ?? seatId(l) };
+  return { name: seatName(l), kind: 'agent', model: model ?? l.model, version: l.version, session: session ?? seatId(l) };
 }
 
 export interface SeatHold {
@@ -76,7 +82,7 @@ export interface SeatHold {
 }
 
 export function seatHolds(g: GlobalConfig, l: LoopConfig): SeatHold[] {
-  return (run(g, ['seat-check', '--assignee', l.name]) as { holds: SeatHold[] }).holds;
+  return (run(g, ['seat-check', '--assignee', seatName(l)]) as { holds: SeatHold[] }).holds;
 }
 
 export function revActor(): object {
@@ -190,7 +196,7 @@ export function launchAdmit(
     );
     // The echoed launch_id is deliberately not compared with the one sent: the
     // answer is Helmo's record of a decision, not a token Rev validates.
-    const res = run(g, ['launch-admit', '--workstream', l.workstream, '--assignee', l.name, '--launch-id', admittedLaunchId], revActor(), true) as
+    const res = run(g, ['launch-admit', '--workstream', l.workstream, '--assignee', seatName(l), '--launch-id', admittedLaunchId], revActor(), true) as
       { admitted?: boolean; ticket_id?: string; workflow_attempt_id?: string | null; admission_id?: string | null };
     const ticketId = res.ticket_id ?? null;
     const exactCandidate = candidate
@@ -260,7 +266,7 @@ export function wakeCheck(g: GlobalConfig, l: LoopConfig, sinceSeq: number): Wak
   // narrows the whole store back down to tickets already assigned, and fresh
   // filings — the wake signal these loops exist for — never land (H-138).
   const scope =
-    l.workstream === '*' ? [] : ['--workstream', l.workstream, '--assignee', l.name];
+    l.workstream === '*' ? [] : ['--workstream', l.workstream, '--assignee', seatName(l)];
   return run(g, ['wake-check', ...scope, '--since-seq', String(sinceSeq)]) as WakeCheck;
 }
 
@@ -291,7 +297,7 @@ export function seatStreams(g: GlobalConfig, l: LoopConfig): string[] {
   try {
     const rows = ['in_progress', 'open'].flatMap(
       (status) =>
-        (run(g, ['list', '--assignee', l.name, '--status', status, '--limit', '100']) as {
+        (run(g, ['list', '--assignee', seatName(l), '--status', status, '--limit', '100']) as {
           tickets: { workstream: string }[];
         }).tickets,
     );
@@ -302,11 +308,11 @@ export function seatStreams(g: GlobalConfig, l: LoopConfig): string[] {
 }
 
 export function actorActivity(g: GlobalConfig, l: LoopConfig, sinceSeq: number): number {
-  return (run(g, ['actor-activity', '--name', l.name, '--session', seatId(l), '--since-seq', String(sinceSeq), '--advancing']) as { events: number }).events;
+  return (run(g, ['actor-activity', '--name', seatName(l), '--session', seatId(l), '--since-seq', String(sinceSeq), '--advancing']) as { events: number }).events;
 }
 
 export function actorTickets(g: GlobalConfig, l: LoopConfig, sinceSeq: number): { id: string; events: number }[] {
-  return (run(g, ['actor-tickets', '--name', l.name, '--session', seatId(l), '--since-seq', String(sinceSeq)]) as { tickets: { id: string; events: number }[] }).tickets;
+  return (run(g, ['actor-tickets', '--name', seatName(l), '--session', seatId(l), '--since-seq', String(sinceSeq)]) as { tickets: { id: string; events: number }[] }).tickets;
 }
 
 export interface SelfSpend {
@@ -317,7 +323,7 @@ export interface SelfSpend {
 }
 
 export function actorSelfSpend(g: GlobalConfig, l: LoopConfig, sinceSeq: number): SelfSpend {
-  const r = run(g, ['actor-spend', '--name', l.name, '--session', seatId(l), '--since-seq', String(sinceSeq)]) as SelfSpend;
+  const r = run(g, ['actor-spend', '--name', seatName(l), '--session', seatId(l), '--since-seq', String(sinceSeq)]) as SelfSpend;
   return { ...r, by_ticket: r.by_ticket ?? [] };
 }
 

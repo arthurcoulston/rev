@@ -40,6 +40,10 @@ constitution is behavioral guidance, and the roster's MCP list does not restrict
 or network access. The user account's permissions are the effective security boundary.
 `rev service install` makes all of this start at login.
 Register a loop only for a folder and a workstream you would hand an unattended agent.
+One accountable role may have multiple workers by giving additional loop
+entries distinct names and writable `cwd` paths and setting `seat` to the
+role name. Worker state, launch identity and spend remain per loop; Helmo
+authorship and ticket ownership remain on the seat.
 
 ## The shape of it
 

@@ -271,7 +271,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         claimSession: h.claim_actor?.session ?? null,
         ageSeconds: h.claimed_at && Number.isFinite(Date.parse(h.claimed_at)) ? Math.max(0, (Date.now() - Date.parse(h.claimed_at)) / 1000) : null,
       }));
-      const seat = seatDecide({ holds, seat: seatId(l), staleSeconds: g.seat_stale_seconds });
+      const seat = seatDecide({ holds, sessions: l.peer_sessions ?? [seatId(l)], staleSeconds: g.seat_stale_seconds });
       if (seat.act === 'stand_down') {
         sSet(l.name, 'SEAT_HELD', seat.reason);
         if (!seatHeld) {

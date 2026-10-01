@@ -156,6 +156,7 @@ export function resolveRef(
 
 /** The complete set of keys a [loops.<name>] table may carry. */
 const LOOP_KEYS = new Set([
+  'seat',
   'workstream', 'cwd', 'constitution', 'version', 'pace', 'idle_floor_s',
   'runtime', 'model', 'provider', 'tier', 'probe_tier', 'probe_model', 'rotation', 'fallback', 'routing',
   'mcp_extra', 'skills', 'mock_cmd', 'burn_usd_per_hour', 'burn_usd_per_day', 'continue_cap',
@@ -213,6 +214,8 @@ export function loadRoster(): Roster {
     }
     loops[name] = {
       name,
+      seat: String(l['seat'] ?? name),
+      peer_sessions: [],
       workstream: String(l['workstream']),
       cwd: expand(String(l['cwd'])),
       runtime: selection.primary.runtime,
@@ -232,6 +235,11 @@ export function loadRoster(): Roster {
       burn_usd_per_day: l['burn_usd_per_day'] === undefined ? undefined : Number(l['burn_usd_per_day']),
       continue_cap: l['continue_cap'] === undefined ? undefined : Number(l['continue_cap']),
     };
+  }
+  for (const loop of Object.values(loops)) {
+    loop.peer_sessions = Object.values(loops)
+      .filter((peer) => peer.seat === loop.seat)
+      .map((peer) => `rev:${peer.name}`);
   }
   return { global, loops, providers };
 }

@@ -97,6 +97,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   sentinel makes the same-seat guard visible while the loop stands down for
   another live session; the view, health feed, and CLI show the hold instead
   of calling it a running iteration, and the marker clears with the hold.
+  Multiple roster loops may explicitly share an accountable `seat`: each
+  keeps its own state directory and `rev:<loop>` session identity, while
+  Helmo sees the role name for assignment, authorship and self-review. The
+  guard exempts only the peer sessions derived from the loaded roster; an
+  unlisted desk session or subagent still holds every worker in the seat.
+  Their `cwd` paths must be separate writable workspaces.
   **Workflow launch admission** is the last gate before a session is spent
   (H-2561, helmo H-471): `launchAdmit` asks helm-cli `launch-admit --workstream
   W --assignee A --launch-id <identity>`, and Helmo picks the

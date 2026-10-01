@@ -26,6 +26,22 @@ describe('roster skills (H-247)', () => {
   });
 });
 
+describe('parallel workers', () => {
+  it('defaults one loop to one seat and groups explicitly shared workers by session', () => {
+    const home = mkdtempSync(join(tmpdir(), 'rev-cfg-'));
+    writeFileSync(join(home, 'PROFILE.md'), '# Profile\n');
+    mkdirSync(join(home, 'work'));
+    const loop = (name: string, seat = '') => `[loops.${name}]\n${seat}workstream = "w"\ncwd = "${join(home, 'work')}"\nruntime = "mock"\nmodel = "m"\nconstitution = "${join(home, 'PROFILE.md')}"\n`;
+    writeFileSync(join(home, 'roster.toml'), `[global]\nhelmo_cli = "x"\nhelmo_mcp_server = "y"\n${loop('builder')}${loop('builder-2', 'seat = "builder"\n')}${loop('reviewer')}\n`);
+    process.env['REV_HOME'] = home;
+    const loops = loadRoster().loops;
+    expect(loops['builder']!.seat).toBe('builder');
+    expect(loops['builder']!.peer_sessions).toEqual(['rev:builder', 'rev:builder-2']);
+    expect(loops['builder-2']!.peer_sessions).toEqual(['rev:builder', 'rev:builder-2']);
+    expect(loops['reviewer']!.peer_sessions).toEqual(['rev:reviewer']);
+  });
+});
+
 describe('providers, tiers, rotation, fallbacks (H-479)', () => {
   function home(loops: string, providers = ''): string {
     const home = mkdtempSync(join(tmpdir(), 'rev-cfg-'));

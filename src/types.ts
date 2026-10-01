@@ -78,6 +78,8 @@ export interface RunChoice {
 
 export interface LoopConfig {
   name: string;
+  seat: string;               // accountable Helmo role; defaults to the loop name
+  peer_sessions: string[];    // supervised workers allowed to share that seat
   workstream: string;
   cwd: string;
   runtime: Runtime;        // primary adapter (derived from 'provider' when that is set)
