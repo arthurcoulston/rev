@@ -14,7 +14,7 @@ const thresholds = {
   staleWaitSeconds: 900,
 };
 
-const anomaly = { rateMultiple: 6, minUsd: 1.0, absPercent: 10 };
+const anomaly = { rateMultiple: 6, minUsd: 5.0, absPercent: 10 };
 
 const claude: RunChoice = { provider: 'claude', runtime: 'claude', model: 'claude-opus-5' };
 const codex: RunChoice = { provider: 'codex', runtime: 'codex', model: 'gpt-5.6-terra' };
@@ -251,6 +251,14 @@ describe('anomalyDecide — a runaway is a slope, not a total (matrix 3)', () =>
     const d = anomalyDecide({ observedUsd: 5.17, meanUsd: 0.6, windowSize: 5, planPointsUsed: 1, thresholds: anomaly });
     expect(d.act).toBe('trip');
     expect((d as { reason: string }).reason).toBe('anomaly: observed=$5.17 mean=$0.60 window=5 over=8.6x the 6x rate multiple');
+  });
+
+  it.each([
+    ['builder H-273', 1.71, 0.19],
+    ['cyber H-303', 2.30, 0.19],
+    ['cyber H-306', 2.55, 0.33],
+  ])('does not mistake the %s cheap-pass to build transition for a runaway', (_incident, observedUsd, meanUsd) => {
+    expect(anomalyDecide({ observedUsd, meanUsd, windowSize: 5, planPointsUsed: 1, thresholds: anomaly }).act).toBe('ok');
   });
 
   it('does not trip on a productive straight line', () => {

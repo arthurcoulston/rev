@@ -155,7 +155,7 @@ describe('capacity roster keys (H-185)', () => {
     expect(g.investigation_target_seconds).toBe(1800);
     expect(g.relapse_window_seconds).toBe(3600);
     expect(g.anomaly_rate_multiple).toBe(6);
-    expect(g.anomaly_min_usd).toBe(1);
+    expect(g.anomaly_min_usd).toBe(5);
     expect(g.anomaly_abs_percent).toBe(10);
     expect(g.exhaustion_ceiling_seconds).toBe(691200);
     // The point of the defaults: the dollar gate is untouched until an estate

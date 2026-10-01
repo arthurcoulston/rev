@@ -236,11 +236,11 @@ export interface AnomalyThresholds {
  *  300 iterations, about a week of fleet time. 6 stands.
  *
  *  The floor is why `minUsd` exists and the design's first cut did not have it.
- *  Of the seven windows over 5x, four are amplification of a tiny base: tester
- *  at $0.72 against a $0.12 mean, reviewer at $0.38 against $0.07. Six times
- *  twelve cents is not a runaway, and halting a loop and opening a priority-0
- *  investigation over 72 cents is the false alarm that teaches everyone to
- *  ignore the alarm. Above $1.00 only one window in the entire history trips.
+ *  A $1 floor still stopped three ordinary transitions from cheap queue passes
+ *  to substantive builds: $1.71/$0.19, $2.30/$0.19 and $2.55/$0.33. The floor
+ *  is therefore $5: above every confirmed productive transition, while the
+ *  historical $5.17/$0.60 cost blowout still trips. This cost heuristic is a
+ *  backstop; the independently measured plan-point ceiling remains absolute.
  *
  *  An iteration whose cost the shim could not determine (the token-log carries
  *  `cost_usd=?` lines) is never a trip and must never enter the mean: an
