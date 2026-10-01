@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { burnWindow, markBurnFloor, meteredProviders, recentCosts } from '../src/burn.js';
 
 const NOW = Date.parse('2026-08-25T16:00:00.000Z');
-const at = (iso: string, loop: string, cost: string) =>
-  `${iso} loop=${loop} runtime=claude model=claude-fable-5 tokens=1000 cost_usd=${cost}`;
+const at = (iso: string, loop: string, cost: string, runtime = 'claude') =>
+  `${iso} loop=${loop} runtime=${runtime} model=claude-fable-5 tokens=1000 cost_usd=${cost}`;
 
 let home: string;
 let log: string;
@@ -74,6 +74,21 @@ describe('burnWindow', () => {
       at('2026-08-25T15:59:00.000Z', 'bosun', '99'),
     ].join('\n') + '\n');
     expect(recentCosts('ward', 5, log)).toEqual([2, 3, 4, 5, 6]);
+  });
+
+  it('counts only the runtime under judgment, so a provider switch is not a burn (H-585)', () => {
+    writeFileSync(log, [
+      ...[0.01, 0.15, 0.30, 0.01, 0.06].map((cost, i) =>
+        at(`2026-08-25T1${i}:00:00.000Z`, 'ward', String(cost), 'codex')),
+      at('2026-08-25T15:00:00.000Z', 'ward', '1.80', 'claude'),
+    ].join('\n') + '\n');
+    // Unscoped, the claude iteration is judged against a codex-only mean.
+    expect(recentCosts('ward', 5, log)).toEqual([0.15, 0.3, 0.01, 0.06, 1.8]);
+    // Scoped, each runtime sees only its own history — and a runtime with none
+    // yet gets an empty baseline rather than a borrowed one.
+    expect(recentCosts('ward', 5, log, 'codex')).toEqual([0.01, 0.15, 0.3, 0.01, 0.06]);
+    expect(recentCosts('ward', 5, log, 'claude')).toEqual([1.8]);
+    expect(recentCosts('ward', 5, log, 'gemini')).toEqual([]);
   });
 
   it('is zero when there is no log at all', () => {

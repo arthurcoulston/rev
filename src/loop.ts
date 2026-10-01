@@ -3,7 +3,7 @@
 // foreground; the multi-loop supervisor is the next milestone.
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { stateDir } from './config.js';
+import { stateDir, tokenLogPath } from './config.js';
 import { LaunchAdmission, WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, launchAdmit, launchId, launchQuarantine, launchReceipt, launchRevalidate, openEscalation, readyTicketIds, recordSpend, scopeLabel, seatHolds, seatId, seatStreams, wakeCheck, workstreamInfo } from './helm.js';
 import { burnWindow, markBurnFloor, recentCosts } from './burn.js';
 import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage, refreshFor, usageForModel } from './usage.js';
@@ -519,7 +519,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     if (l.workstream !== '*') {
       try { readyBefore = readyTicketIds(g, l); } catch (e) { logEvent(l.name, 'decline-check-failed', `before ${String(e).slice(0, 160)}`); }
     }
-    const costBaseline = recentCosts(l.name);
+    const costBaseline = recentCosts(l.name, 5, tokenLogPath(), run.runtime);
     const usageBefore = (run.billing ?? 'metered') === 'subscription'
       ? usageForModel(providerUsage()[run.runtime], model)
       : null;
@@ -661,7 +661,9 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     // A flat-plan account is bounded by its plan bars, not cumulative notional
     // dollars, but a sudden change in either slope is still a real containment
     // signal. Compare against the baseline captured before this run, so the
-    // iteration under judgment never dilutes its own rolling mean.
+    // iteration under judgment never dilutes its own rolling mean, and scoped to
+    // its own runtime, so moving a loop between providers is not read as a burn
+    // (H-585).
     if (res.cls === 'ok' && (run.billing ?? 'metered') === 'subscription') {
       const usageAfter = usageForModel(await refreshFor(run.runtime), model);
       const meanUsd = costBaseline.length

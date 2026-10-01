@@ -17,6 +17,7 @@ export interface BurnWindow {
 }
 
 const LINE = /^(\S+) loop=(\S+).*?cost_usd=(\S+)/;
+const RUNTIME = /\bruntime=(\S+)/;
 
 function floorPath(loop: string): string {
   return join(stateDir(loop), '.burn_floor');
@@ -69,13 +70,23 @@ export function burnWindow(loop: string, now = Date.now(), path = tokenLogPath()
 
 /** The last parseable per-iteration costs, newest last. Unknown costs never
  *  become zero: doing so would depress the baseline and make the next ordinary
- *  iteration look anomalous. */
-export function recentCosts(loop: string, limit = 5, path = tokenLogPath()): number[] {
+ *  iteration look anomalous.
+ *
+ *  Pass `runtime` to count only the iterations that ran on the same one. Without
+ *  it a provider switch is indistinguishable from a burn: per-token cost differs
+ *  by two orders of magnitude between the runtimes a loop can be moved between
+ *  (codex gpt-5.6-terra ~$0.48/Mtok against claude-sonnet-5 ~$47.7/Mtok), so
+ *  tester's first claude iteration scored 17.9x against a mean built entirely
+ *  from codex and halted a healthy loop (H-585). A runtime with no history yet
+ *  has no dollar baseline, exactly as a brand-new loop does — the absolute
+ *  plan-points rule is the guard in that window (H-388). */
+export function recentCosts(loop: string, limit = 5, path = tokenLogPath(), runtime?: string): number[] {
   if (!existsSync(path) || limit <= 0) return [];
   const costs: number[] = [];
   for (const line of readFileSync(path, 'utf8').split('\n')) {
     const m = LINE.exec(line);
     if (!m || m[2] !== loop) continue;
+    if (runtime !== undefined && RUNTIME.exec(line)?.[1] !== runtime) continue;
     const cost = Number(m[3]);
     if (Number.isFinite(cost)) costs.push(cost);
   }

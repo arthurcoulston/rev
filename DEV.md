@@ -228,17 +228,18 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   wrong rather than the plan.
   `anomalyDecide` measures a rate against the loop's own rolling mean, never a
   cumulative total. After a subscription run the loop compares its notional
-  cost with the preceding five parseable iterations and refreshes the same plan
-  window to measure percentage-point movement. A trip writes both the halt
-  sentinel and `BLOCKED.json` with the observed values, baseline, time and
-  escalation ticket, which `/health.json` and the dashboard surface. An
-  anomaly or terminal-capacity trip is assigned at priority 0 to the first
-  live, unblocked roster peer. A peer can authorize one restart by attaching
-  an exact `rev:false_alarm:<encoded reason>` evidence ref; the supervisor
-  matches it to `BLOCKED.json`, clears only BLOCKED, and proves minimum uptime
-  before closing the investigation. A same-reason relapse inside the configured
-  window, or the absence of a live peer, routes to the human instead. **No
-  percent is ever converted to tokens or dollars**, in either direction.
+  cost with the preceding five parseable iterations *on the same runtime* and
+  refreshes the same plan window to measure percentage-point movement. A trip
+  writes both the halt sentinel and `BLOCKED.json` with the observed values,
+  baseline, time and escalation ticket, which `/health.json` and the dashboard
+  surface. An anomaly or terminal-capacity trip is assigned at priority 0 to
+  the first live, unblocked roster peer. A peer can authorize one restart by
+  attaching an exact `rev:false_alarm:<encoded reason>` evidence ref; the
+  supervisor matches it to `BLOCKED.json`, clears only BLOCKED, and proves
+  minimum uptime before closing the investigation. A same-reason relapse
+  inside the configured window, or the absence of a live peer, routes to the
+  human instead. **No percent is ever converted to tokens or dollars**, in
+  either direction.
 - `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent
   CLAUDE/ANTHROPIC/CODEX env — the auth-leak fix; don't weaken it) and
@@ -1152,7 +1153,15 @@ follow a module imported dynamically much later.
   `capacity.ts` for why the rate axis is cost rather than tokens (the two
   largest token ratios in that record cost *less* than their own means — they
   are cache reads) and why the multiple needs an absolute floor beneath it
-  (6× a $0.12 mean is 72 cents, which is not a runaway).
+  (6× a $0.12 mean is 72 cents, which is not a runaway). The baseline is scoped
+  to the runtime under judgment (H-585): the notional dollars of two runtimes
+  are not the same scale — this bullet already says why, since codex's come from
+  roster prices × tokens and claude's from the CLI's API-equivalent estimate —
+  and the gap as billed here is ~100x per token. Unscoped, tester's first claude
+  iteration after a day of codex scored 17.9x against a codex-only mean and
+  halted a productive loop. A runtime with no history has no dollar baseline,
+  exactly as a brand-new loop does, and the absolute plan-points rule is the
+  guard in that window.
 - Escalations must land as Helmo tickets, never only in logs; a BLOCKED loop
   that couldn't escalate prints loudly and relies on the dashboard. One live
   summons per loop (H-401): a block checks for a standing non-terminal
