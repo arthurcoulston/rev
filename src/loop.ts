@@ -497,7 +497,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     const usageBefore = (run.billing ?? 'metered') === 'subscription'
       ? usageForModel(providerUsage()[run.runtime], model)
       : null;
-    const res = runSession(g, l, prompt, model, run);
+    const res = await runSession(g, l, prompt, model, run);
 
     const durSec = Math.round((Date.now() - started) / 1000);
     ({ window: durWindow, mean: tAvg } = rollingMean(durWindow, durSec));

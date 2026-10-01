@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { codexArgs, codexFailureLine, codexMcpArg, notionalCost, parseCodexEvents, runSession, sessionEnv, sessionSpec, systemPrompt, tomlString } from '../src/shim.js';
+import { codexArgs, codexFailureLine, codexMcpArg, notionalCost, parseCodexEvents, runSession, sessionEnv, sessionSpec, spawnSession, systemPrompt, tomlString } from '../src/shim.js';
 import type { GlobalConfig, LoopConfig } from '../src/types.js';
 import { parse } from 'smol-toml';
 import { execFileSync, spawn } from 'node:child_process';
@@ -55,6 +55,43 @@ describe('parseCodexEvents (H-479)', () => {
     expect(parseCodexEvents('Reading additional input from stdin...\n' + EVENTS).turnCompleted).toBe(true);
     expect(parseCodexEvents('').turnCompleted).toBe(false);
   });
+
+  it('distinguishes a malformed/truncated event from harmless non-JSON chatter', () => {
+    const run = parseCodexEvents('Reading additional input from stdin...\n{"type":"turn.completed"');
+    expect(run.malformedEvents).toBe(1);
+    expect(codexFailureLine(0, run)).toContain('malformed/truncated events: 1');
+  });
+});
+
+describe('streamed child output (H-387)', () => {
+  it('retains harmless output beyond spawnSync\'s former 32 MiB ceiling', async () => {
+    const result = await spawnSession(process.execPath, ['-e', "process.stdout.write('x'.repeat(34*1024*1024))"], { cwd: '/tmp', env: process.env });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.overflow).toBeUndefined();
+    expect(result.stdout.length).toBe(34 * 1024 * 1024);
+  }, 15_000);
+
+  it('reports an actual missing executable as ENOENT', async () => {
+    const result = await spawnSession('/definitely/not/a/rev-command', [], { cwd: '/tmp', env: process.env });
+    expect(result.error?.code).toBe('ENOENT');
+  });
+
+  it('keeps child exit failure distinct from launch failure', async () => {
+    const result = await spawnSession(process.execPath, ['-e', 'process.exit(23)'], { cwd: '/tmp', env: process.env });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(23);
+  });
+
+  it.each(['stdout', 'stderr'] as const)('bounds %s overflow and terminates the child', async (stream) => {
+    const script = `const b=Buffer.alloc(1024*1024); for(let i=0;i<129;i++) process.${stream}.write(b); setInterval(()=>{},1000)`;
+    const result = await spawnSession(process.execPath, ['-e', script], { cwd: '/tmp', env: process.env });
+    expect(result.error).toBeUndefined();
+    expect(result.overflow).toBe(stream);
+    expect(Buffer.byteLength(result[stream])).toBeLessThanOrEqual(128 * 1024 * 1024);
+    expect(result.signal).toBe('SIGTERM');
+    expect(() => process.kill(result.pid!, 0)).toThrow();
+  }, 30_000);
 });
 
 describe('notionalCost (H-479)', () => {
@@ -73,7 +110,7 @@ describe('notionalCost (H-479)', () => {
 });
 
 describe('selected runtime metering (H-1903)', () => {
-  it.each([false, true])('records Claude under a Codex-default rotating loop (is_error=%s)', (isError) => {
+  it.each([false, true])('records Claude under a Codex-default rotating loop (is_error=%s)', async (isError) => {
     const home = mkdtempSync(join(tmpdir(), 'rev-runtime-'));
     const bin = join(home, 'bin');
     const constitution = join(home, 'PROFILE.md');
@@ -87,7 +124,7 @@ describe('selected runtime metering (H-1903)', () => {
     process.env['REV_HOME'] = home;
     try {
       const loop = { name: 'rotating', runtime: 'codex', model: 'm', version: '0', cwd: home, constitution } as LoopConfig;
-      const result = runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'claude-model', { runtime: 'claude' });
+      const result = await runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'claude-model', { runtime: 'claude' });
       expect(result.rc).toBe(isError ? 1 : 0);
       expect(readFileSync(join(home, 'token-log'), 'utf8')).toContain('runtime=claude model=claude-model');
     } finally {
@@ -155,7 +192,7 @@ describe('codexArgs (H-520)', () => {
 // what this asserts. Drop `detached` from the shim's spawn options and the
 // session dies mid-run, the marker is never written, and the alarm rings.
 describe('session process group (H-467)', () => {
-  it('sweeps background children after a completed iteration (H-1013)', () => {
+  it('sweeps background children after a completed iteration (H-1013)', async () => {
     const home = mkdtempSync(join(tmpdir(), 'rev-grp-'));
     const pidFile = join(home, 'background-pid');
     const loop = {
@@ -163,7 +200,7 @@ describe('session process group (H-467)', () => {
       mock_cmd: `sleep 30 >/dev/null 2>&1 & echo $! > ${pidFile}`,
     } as LoopConfig;
 
-    const res = runSession({} as GlobalConfig, loop, 'prompt');
+    const res = await runSession({} as GlobalConfig, loop, 'prompt');
     expect(res.rc, res.outputTail).toBe(0);
     const pid = Number(execFileSync('cat', [pidFile], { encoding: 'utf8' }).trim());
     expect(() => process.kill(pid, 0)).toThrow();
@@ -177,7 +214,7 @@ describe('session process group (H-467)', () => {
     writeFileSync(
       file,
       `import { runSession } from ${JSON.stringify(join(import.meta.dirname, '..', 'src', 'shim.ts'))};\n` +
-        `runSession({}, { name: 'grouptest', runtime: 'mock', model: 'm', version: '0', cwd: '/tmp',\n` +
+        `await runSession({}, { name: 'grouptest', runtime: 'mock', model: 'm', version: '0', cwd: '/tmp',\n` +
         `  mock_cmd: 'echo started > ${started}; sleep 2; echo closed > ${marker}' }, 'prompt');\n`,
     );
 
@@ -229,7 +266,7 @@ describe('session git identity (H-787)', () => {
     expect(env['PATH']).toBe(process.env['PATH']); // still the cleaned parent env
   });
 
-  it('a real session commit carries the seat as committer and the human as author', () => {
+  it('a real session commit carries the seat as committer and the human as author', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'rev-git-'));
     const git = (...a: string[]) => execFileSync('git', a, { cwd: repo, encoding: 'utf8' }).trim();
     git('init', '-q');
@@ -237,7 +274,7 @@ describe('session git identity (H-787)', () => {
     git('config', 'user.email', 'operator@example.test');
     writeFileSync(join(repo, 'f.txt'), 'work\n');
 
-    const res = runSession({} as GlobalConfig, { ...loop, cwd: repo, mock_cmd: 'git add -A && git commit -q -m "session work"' }, 'prompt');
+    const res = await runSession({} as GlobalConfig, { ...loop, cwd: repo, mock_cmd: 'git add -A && git commit -q -m "session work"' }, 'prompt');
     expect(res.rc, res.outputTail).toBe(0);
 
     const [an, ae, cn, ce] = git('log', '-1', '--format=%an%x00%ae%x00%cn%x00%ce').split('\x00');
