@@ -97,6 +97,35 @@ describe('selected runtime metering (H-1903)', () => {
   });
 });
 
+describe('pool worker launch generation (H-574)', () => {
+  // The Helmo MCP server is the session's only write path, so the generation
+  // must reach the config the model CLI is actually handed, not just the mock.
+  it('a Claude session\'s Helmo identity carries the launch generation, and an unbound one carries none', () => {
+    const home = mkdtempSync(join(tmpdir(), 'rev-generation-'));
+    const bin = join(home, 'bin');
+    const constitution = join(home, 'PROFILE.md');
+    execFileSync('mkdir', ['-p', bin]);
+    writeFileSync(constitution, 'test constitution');
+    writeFileSync(join(bin, 'claude'), `#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = --mcp-config ] && cp "$2" "$REV_HOME/mcp-$REV_GEN_CASE.json"; shift; done\nprintf '%s\\n' '${JSON.stringify({ usage: { input_tokens: 1, output_tokens: 1 }, total_cost_usd: 0, result: 'done', is_error: false })}'\n`);
+    chmodSync(join(bin, 'claude'), 0o755);
+    const before = { PATH: process.env['PATH'], REV_HOME: process.env['REV_HOME'], REV_GEN_CASE: process.env['REV_GEN_CASE'] };
+    process.env['PATH'] = `${bin}:${before.PATH}`;
+    process.env['REV_HOME'] = home;
+    try {
+      const loop = { name: 'w1', seat: 'builder', runtime: 'claude', model: 'm', version: '0', cwd: home, constitution } as LoopConfig;
+      const actor = (c: string) => JSON.parse((JSON.parse(readFileSync(join(home, `mcp-${c}.json`), 'utf8')) as { mcpServers: { helmo: { env: { HELMO_ACTOR: string } } } }).mcpServers.helmo.env.HELMO_ACTOR) as Record<string, unknown>;
+      process.env['REV_GEN_CASE'] = 'bound';
+      expect(runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'm', undefined, 'rev:w1:1:1:1').rc).toBe(0);
+      expect(actor('bound')).toMatchObject({ name: 'builder', session: 'rev:w1', generation: 'rev:w1:1:1:1' });
+      process.env['REV_GEN_CASE'] = 'unbound';
+      expect(runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'm').rc).toBe(0);
+      expect(actor('unbound')).not.toHaveProperty('generation');
+    } finally {
+      for (const [k, v] of Object.entries(before)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  });
+});
+
 describe('codex MCP override (H-479)', () => {
   it('serializes the server table as valid TOML with tools auto-approved', () => {
     const actor = JSON.stringify({ name: 'bosun', kind: 'agent', model: 'gpt-5.6-terra', version: '0.3' });

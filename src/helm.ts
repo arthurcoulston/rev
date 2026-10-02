@@ -71,8 +71,11 @@ export function seatName(l: LoopConfig): string {
 // A session override is for a consumer that is NOT the loop: a meeting room
 // runs the seat's composed session but must not sign as `rev:<seat>`, or the
 // seat guard above reads a meeting's write as the loop's own hold (H-1152).
-export function loopActor(l: LoopConfig, model?: string, session?: string): object {
-  return { name: seatName(l), kind: 'agent', model: model ?? l.model, version: l.version, session: session ?? seatId(l) };
+// A pool worker's launch also names its generation, which is the launch id
+// (H-574): Helmo binds the claim to that one attempt, so every write the
+// session makes must carry it, and a retired generation writes nothing.
+export function loopActor(l: LoopConfig, model?: string, session?: string, generation?: string): object {
+  return { name: seatName(l), kind: 'agent', model: model ?? l.model, version: l.version, session: session ?? seatId(l), ...(generation ? { generation } : {}) };
 }
 
 export interface SeatHold {
@@ -271,6 +274,9 @@ export interface LaunchClaim {
   ticketId: string | null;
   workflowAttemptId?: string;
   admissionId?: string;
+  /** The worker already held this ticket from an earlier launch, and Helmo
+   *  handed it forward to this one, retiring the earlier generation. */
+  resumed?: boolean;
 }
 
 export function launchClaimArgs(l: LoopConfig, id: string): string[] {
@@ -282,8 +288,8 @@ export function launchClaim(g: GlobalConfig, l: LoopConfig, id: string): LaunchC
   // claim against this session, which is what the seat guard and the replay
   // fence both read.
   try {
-    const res = run(g, launchClaimArgs(l, id), loopActor(l), true) as {
-      admitted?: boolean; claimed?: boolean; ticket_id?: string; workflow_attempt_id?: string | null; admission_id?: string | null;
+    const res = run(g, launchClaimArgs(l, id), loopActor(l, undefined, undefined, id), true) as {
+      admitted?: boolean; claimed?: boolean; resumed?: boolean; ticket_id?: string; workflow_attempt_id?: string | null; admission_id?: string | null;
       launch_id?: string; scope?: { session?: string; assignee?: string; workstream?: string; project?: string | null };
     };
     if (res.admitted === false && res.claimed === undefined) return { act: 'idle', how: 'nothing_ready', reason: 'nothing ready to claim', ticketId: null };
@@ -298,7 +304,8 @@ export function launchClaim(g: GlobalConfig, l: LoopConfig, id: string): LaunchC
       act: 'launch', how: 'claimed', ticketId: res.ticket_id!,
       workflowAttemptId: res.workflow_attempt_id ?? undefined,
       admissionId: res.admission_id ?? undefined,
-      reason: `claimed ${res.ticket_id}${res.admission_id ? ` admitted as ${res.admission_id}` : ''}`,
+      resumed: res.resumed === true,
+      reason: `${res.resumed === true ? 'resumed' : 'claimed'} ${res.ticket_id}${res.admission_id ? ` admitted as ${res.admission_id}` : ''}`,
     };
   } catch (e) {
     const raw = String((e as { stderr?: string | Buffer }).stderr ?? '').trim();
@@ -315,16 +322,19 @@ export function launchClaim(g: GlobalConfig, l: LoopConfig, id: string): LaunchC
   }
 }
 
-/** Put down a claim this worker's launch took and its session did not settle,
- *  so the ticket returns to the seat's ready queue for the next worker. Only a
- *  ticket still in progress under this seat is touched; anything the session
- *  moved (done, returned, handed off) is left as it was. Releasing keeps the
- *  reservation (Helmo H-954), so the ticket stays the seat's. Returns whether
- *  it released. */
-export function releaseClaim(g: GlobalConfig, l: LoopConfig, ticketId: string, why: string): boolean {
+/** Put down a claim this worker's launch took but never got to work — the
+ *  session did not start, or the launch was refused before dispatch — so the
+ *  ticket returns to the seat's ready queue for the next worker. Work a
+ *  session started is never put down here: it stays with this worker and its
+ *  next launch resumes it. Written as the launch's own generation, which is
+ *  the only identity Helmo lets move the claim, and which leaving in_progress
+ *  retires. Only a ticket still in progress under this seat is touched.
+ *  Releasing keeps the reservation (Helmo H-954), so the ticket stays the
+ *  seat's. Returns whether it released. */
+export function releaseClaim(g: GlobalConfig, l: LoopConfig, ticketId: string, generation: string, why: string): boolean {
   const t = run(g, ['get', ticketId]) as { status?: string; assignee?: string | null };
   if (t.status !== 'in_progress' || t.assignee !== seatName(l)) return false;
-  run(g, ['update', '--ticket', ticketId, '--status', 'open', '--note', `Rev released ${seatId(l)}'s launch claim: ${why}`], loopActor(l), true);
+  run(g, ['update', '--ticket', ticketId, '--status', 'open', '--note', `Rev released ${seatId(l)}'s launch claim: ${why}`], loopActor(l, undefined, undefined, generation), true);
   return true;
 }
 

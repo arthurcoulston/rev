@@ -49,7 +49,9 @@ export function sessionEnv(l: LoopConfig): NodeJS.ProcessEnv {
   return { ...cleanEnv(), ...sessionEnvOverrides(l) };
 }
 
-export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: string, model = l.model, choice?: RunChoice): SessionResult {
+// `generation` is a pool worker's launch id (H-574): the session's Helmo
+// identity carries it, so its writes bind to the claim this launch holds.
+export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: string, model = l.model, choice?: RunChoice, generation?: string): SessionResult {
   const runtime = choice?.runtime ?? l.runtime;
   // Apparatus pre-flight, fail closed: never launch a half-instructed agent.
   if (runtime !== 'mock') {
@@ -62,11 +64,11 @@ export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: stri
   }
   switch (runtime) {
     case 'claude':
-      return runClaude(g, l, iterationPrompt, model);
+      return runClaude(g, l, iterationPrompt, model, generation);
     case 'codex':
-      return runCodex(g, l, iterationPrompt, model, choice);
+      return runCodex(g, l, iterationPrompt, model, choice, generation);
     case 'mock':
-      return runMock(l, iterationPrompt, model);
+      return runMock(l, iterationPrompt, model, generation);
     default:
       return { rc: 78, cls: 'apparatus', outputTail: `unsupported runtime '${runtime as string}' — add a shim branch` };
   }
@@ -75,8 +77,8 @@ export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: stri
 // Sessions get exactly the roster's MCP surface: Helm (with this loop's actor
 // identity) plus any extra servers the loop declares. Each adapter serializes
 // this one record its CLI's way and keeps ambient user-scope servers out.
-export function mcpServers(g: GlobalConfig, l: LoopConfig, model: string, session?: string): Record<string, Record<string, unknown>> {
-  const helmEnv: Record<string, string> = { HELMO_ACTOR: JSON.stringify(loopActor(l, model, session)) };
+export function mcpServers(g: GlobalConfig, l: LoopConfig, model: string, session?: string, generation?: string): Record<string, Record<string, unknown>> {
+  const helmEnv: Record<string, string> = { HELMO_ACTOR: JSON.stringify(loopActor(l, model, session, generation)) };
   if (g.helmo_db) helmEnv['HELMO_DB'] = g.helmo_db;
   if (process.env['INSTALLATION_RELEASE']) helmEnv['INSTALLATION_RELEASE'] = process.env['INSTALLATION_RELEASE'];
   const servers: Record<string, Record<string, unknown>> = {
@@ -88,9 +90,9 @@ export function mcpServers(g: GlobalConfig, l: LoopConfig, model: string, sessio
   return servers;
 }
 
-function writeMcpConfig(g: GlobalConfig, l: LoopConfig, dir: string, model: string): string {
+function writeMcpConfig(g: GlobalConfig, l: LoopConfig, dir: string, model: string, generation?: string): string {
   const path = join(dir, 'mcp.json');
-  writeFileSync(path, JSON.stringify({ mcpServers: mcpServers(g, l, model) }));
+  writeFileSync(path, JSON.stringify({ mcpServers: mcpServers(g, l, model, undefined, generation) }));
   return path;
 }
 
@@ -257,10 +259,10 @@ export function sessionSpec(
   };
 }
 
-function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string): SessionResult {
+function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, generation?: string): SessionResult {
   const scratch = mkdtempSync(join(tmpdir(), 'rev-'));
   try {
-    const mcpConfig = writeMcpConfig(g, l, scratch, model);
+    const mcpConfig = writeMcpConfig(g, l, scratch, model, generation);
     let systemFile = l.constitution;
     if (l.skills?.length) {
       systemFile = join(scratch, 'system.md');
@@ -409,7 +411,7 @@ export function codexFailureLine(status: number | null, run: CodexRun): string {
     (run.failure ? `, error event: ${run.failure.slice(0, 500)}` : '') + '\n';
 }
 
-function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, choice?: RunChoice): SessionResult {
+function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, choice?: RunChoice, generation?: string): SessionResult {
   // Same contract as runClaude, codex's way: prompt via stdin (a constitution
   // in argv is world-readable via ps and bumps into argv limits), MCP via the
   // whole-table -c override, results from the --json event stream. Approvals
@@ -417,7 +419,7 @@ function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string,
   // fleet, whichever CLI runs the iteration.
   const res = spawnSync(
     'codex',
-    codexArgs(model, codexMcpArg(mcpServers(g, l, model)), choice?.config),
+    codexArgs(model, codexMcpArg(mcpServers(g, l, model, undefined, generation)), choice?.config),
     {
       cwd: l.cwd,
       encoding: 'utf8',
@@ -457,12 +459,12 @@ function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string,
 // the harness itself is testable (and installs verifiable) without an agent CLI
 // or tokens. The command's exit code flows through the ladder unchanged, so
 // tests can exercise every failure class.
-function runMock(l: LoopConfig, prompt: string, model: string): SessionResult {
+function runMock(l: LoopConfig, prompt: string, model: string, generation?: string): SessionResult {
   if (!l.mock_cmd) return { rc: 78, cls: 'apparatus', outputTail: "mock runtime requires 'mock_cmd' in the roster" };
   const res = spawnSync('bash', ['-c', l.mock_cmd], {
     cwd: l.cwd,
     encoding: 'utf8',
-    env: { ...sessionEnv(l), REV_PROMPT: prompt, REV_MODEL: model, HELMO_ACTOR: JSON.stringify(loopActor(l, model)) },
+    env: { ...sessionEnv(l), REV_PROMPT: prompt, REV_MODEL: model, HELMO_ACTOR: JSON.stringify(loopActor(l, model, undefined, generation)) },
     ...SESSION_GROUP,
   });
   endSessionGroup(res.pid);

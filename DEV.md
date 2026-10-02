@@ -108,19 +108,29 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   seat skips `launch-admit` and, just before `run-start` (after every capacity
   exit, before the probe decision), calls helm-cli `launch-claim --workstream W
   --assignee <seat> --launch-id <id> [--project P]` written by the worker
-  itself — seat name, `rev:<loop>` session — so Helmo selects, workflow-admits
-  and claims in one transaction. The prompt then names the one ticket and
+  itself — seat name, `rev:<loop>` session, `generation` = the launch id — so
+  Helmo selects, workflow-admits and claims in one transaction, bound to that
+  one attempt. The session's `HELMO_ACTOR` (MCP env, and the mock's env)
+  carries the same generation; Helmo refuses execution writes on the ticket
+  from any other session or generation (`execution_claim_held`) and any write
+  from a retired one (`stale_generation`). The prompt names the one ticket and
   forbids touching any other. The journal records `claim: true` at intent and
-  the ticket on the receipt; whatever the session leaves in progress, and
-  anything a failed revalidation or suppressed replay leaves, goes back to
-  `open` with the seat reservation kept. On restart an unanswered claim
-  intent is replayed under its own id (Helmo returns the original receipt)
-  and what it names is released. A store without `launch-claim` denies every
-  pool launch — without the atomic claim two workers race the same ticket.
-  Nothing ready means `launch-idle` and no session. `project` is the worker's
-  lane; it is refused on a loop with no pool. Known gap: Helmo fences a claim
-  by actor NAME, so a misbehaving session could still update a sibling's
-  ticket; the prompt binding is the only guard against that today.
+  the ticket on the receipt. **Unfinished work stays with its worker**: a
+  session that ends with the ticket in progress logs `claim-kept`, and the
+  same worker's next `launch-claim` returns it with `resumed: true` — retiring
+  the old generation — and the prompt says it was resumed, names the
+  workspace, and points at the ticket's last recorded step. A restart after a
+  crash settles the dead launch's journal and keeps the claim the same way, so
+  a child that outlived its loop can write nothing after the resume. Only a
+  claim never worked goes back to `open` (seat reservation kept), released as
+  the launch's own generation: a session that never started (`apparatus`), a
+  failed pre-dispatch revalidation, a suppressed replay, or a journal write
+  that failed. A resumed workflow claim carries the admission its first launch
+  consumed (Helmo revalidates it at resume), so Rev journals it claim-only. A
+  store without `launch-claim` denies every pool launch — without the atomic
+  claim two workers race the same ticket. Nothing ready means `launch-idle`
+  and no session. `project` is the worker's lane; it is refused on a loop
+  with no pool.
   **Workflow launch admission** is the last gate before a session is spent
   (H-2561, helmo H-471): `launchAdmit` asks helm-cli `launch-admit --workstream
   W --assignee A --launch-id <identity>`, and Helmo picks the

@@ -17,7 +17,7 @@ interface Env { home: string; db: string; env: NodeJS.ProcessEnv }
 
 // The bound ticket is read back out of the prompt, which is the only place a
 // real model session learns it.
-const BOUND = `T=$(printf '%s' "$REV_PROMPT" | grep -o 'claimed ticket H-[0-9]*' | grep -o 'H-[0-9]*'); echo "$REV_LOOP $T" >> $REV_HOME/bound`;
+const BOUND = `T=$(printf '%s' "$REV_PROMPT" | grep -oE '(claimed|resumed) ticket H-[0-9]+' | grep -oE 'H-[0-9]+'); echo "$REV_LOOP $T" >> $REV_HOME/bound`;
 const FINISH = `node ${HELM_CLI} update --ticket $T --note "done by $REV_LOOP" --status done --evidence-kind other --evidence-ref pool`;
 
 function worker(name: string, home: string, mock: string, extra = ''): string {
@@ -136,19 +136,44 @@ describe('pool workers on one seat (H-574)', { timeout: 60000 }, () => {
     expect(events(e, idle[0]!)).not.toMatch(/run-start/);
   });
 
-  it('puts a claim back on the seat when the session ends without settling it', () => {
-    // The session works the ticket and stops mid-way, leaving it in progress.
-    const e = setup((h) => worker('w1', h, `${BOUND}; node ${HELM_CLI} update --ticket $T --note "partial progress"; exit 1`) + worker('w2', h, 'true'));
+  it('keeps unfinished work with its worker, and that worker\'s next launch resumes it', () => {
+    // The first session works the ticket and stops mid-way, leaving it in
+    // progress; the second finds it handed back to it, not to the queue.
+    const resume = `${BOUND}; printf '%s' "$REV_PROMPT" > $REV_HOME/prompt-$(wc -l < $REV_HOME/bound | tr -d ' '); [ -f $REV_HOME/second ] || { node ${HELM_CLI} update --ticket $T --note "partial progress"; exit 1; }; ${FINISH}`;
+    const e = setup((h) => worker('w1', h, resume) + worker('w2', h, 'true'));
     const id = seed(e, 'Unfinished work');
+    const run = () => execFileSync('npx', ['tsx', REV_CLI, 'run', 'w1', '--count', '1'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+
+    run();
+    expect(ticket(e, id)).toMatchObject({ status: 'in_progress', assignee: 'builder' });
+    expect(events(e, 'w1')).toMatch(new RegExp(`claim-kept\\s+${id} session ended failure; the next launch resumes it`));
+    expect(events(e, 'w1')).not.toMatch(/claim-released/);
+    // The session's own note was accepted, so its identity carried the
+    // generation Helmo bound the claim to.
+    expect(events(e, 'w1')).not.toMatch(/execution_claim_held/);
+
+    writeFileSync(join(e.home, 'second'), '');
+    run();
+    expect(ticket(e, id).status).toBe('done');
+    expect(events(e, 'w1')).toMatch(new RegExp(`launch-claimed\\s+resumed ${id}`));
+    expect(readFileSync(join(e.home, 'bound'), 'utf8').trim().split('\n')).toEqual([`w1 ${id}`, `w1 ${id}`]);
+    const resumedPrompt = readFileSync(join(e.home, 'prompt-2'), 'utf8');
+    expect(resumedPrompt).toContain(`Rev has resumed ticket ${id}`);
+    expect(resumedPrompt).toContain(`Your workspace is ${join(e.home, 'w1')}`);
+    expect(readFileSync(join(e.home, 'prompt-1'), 'utf8')).not.toContain('Rev has resumed');
+  });
+
+  it('puts the claim back when the session never started', () => {
+    const e = setup((h) => worker('w1', h, `${BOUND}; exit 78`) + worker('w2', h, 'true'));
+    const id = seed(e, 'Launch that never ran');
 
     execFileSync('npx', ['tsx', REV_CLI, 'run', 'w1', '--count', '1'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
 
     expect(ticket(e, id)).toMatchObject({ status: 'open', assignee: 'builder' });
-    expect(events(e, 'w1')).toMatch(new RegExp(`claim-released\\s+${id} session ended failure`));
-    expect(journal(e, 'w1')).toEqual([expect.objectContaining({ phase: 'quarantined', ticket_id: id })]);
+    expect(events(e, 'w1')).toMatch(new RegExp(`claim-released\\s+${id} its session never started`));
   });
 
-  it('releases the claim a killed worker held, and the next launch picks it up again', async () => {
+  it('a killed worker keeps its claim, the next launch resumes it, and the dead launch can write nothing', async () => {
     const e = setup((h) => worker('w1', h, `${BOUND}; touch $REV_HOME/model-started; [ -f $REV_HOME/second ] || sleep 30; ${FINISH}`) + worker('w2', h, 'true'));
     const id = seed(e, 'Work interrupted by a crash');
 
@@ -156,6 +181,7 @@ describe('pool workers on one seat (H-574)', { timeout: 60000 }, () => {
     await waitFor(() => existsSync(join(e.home, 'model-started')));
     expect(ticket(e, id).status).toBe('in_progress');
     const loopPid = Number(/loop-start\s+pid=(\d+)/.exec(events(e, 'w1'))![1]);
+    const dead = journal(e, 'w1')[0]!['launch_id'] as string;
     process.kill(loopPid, 'SIGKILL');
     child.kill('SIGKILL');
     await exited(child);
@@ -164,10 +190,21 @@ describe('pool workers on one seat (H-574)', { timeout: 60000 }, () => {
     execFileSync('npx', ['tsx', REV_CLI, 'run', 'w1', '--count', '1'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
 
     const log = events(e, 'w1');
-    expect(log).toMatch(new RegExp(`claim-released\\s+${id} recovered dispatching`));
+    expect(log).toMatch(new RegExp(`claim-kept\\s+${id} recovered dispatching`));
     expect(log).toMatch(/launch-quarantined.*recovered dispatching/);
+    expect(log).toMatch(new RegExp(`launch-claimed\\s+resumed ${id}`));
+    expect(log).not.toMatch(/claim-released/);
     expect(ticket(e, id).status).toBe('done');
     expect(readFileSync(join(e.home, 'bound'), 'utf8').trim().split('\n')).toEqual([`w1 ${id}`, `w1 ${id}`]);
+    // A child of the dead launch that outlived it writes as that generation,
+    // which the resume retired.
+    let refused = '';
+    try {
+      execFileSync('node', [HELM_CLI, 'update', '--ticket', id, '--note', 'late write'], {
+        env: { ...e.env, HELMO_ACTOR: JSON.stringify({ name: 'builder', kind: 'agent', model: 't', version: '0', session: 'rev:w1', generation: dead }) }, encoding: 'utf8', stdio: 'pipe',
+      });
+    } catch (err) { refused = String((err as { stderr?: string }).stderr); }
+    expect(refused).toMatch(/stale_generation/);
   });
 
   it('claims only inside its project lane', () => {
