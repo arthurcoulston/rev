@@ -250,6 +250,84 @@ export function launchQuarantine(g: GlobalConfig, admissionId: string, launchId:
   run(g, ['launch-quarantine', '--admission-id', admissionId, '--launch-id', launchId, '--reason', reason], revActor(), true);
 }
 
+/** A loop is a pool worker when another roster loop shares its seat. Such a
+ *  worker never lets its model session choose work: two sessions reading the
+ *  same ready queue would both start the first ticket. It launches only on a
+ *  ticket Helmo has already claimed for it. */
+export function poolWorker(l: LoopConfig): boolean {
+  return (l.peer_sessions?.length ?? 0) > 1;
+}
+
+/** Helmo's answer to one pool worker's launch-claim (H-574). Selection,
+ *  workflow admission and the exclusive claim commit in one transaction, so a
+ *  sibling worker asking at the same instant gets the next ticket or none.
+ *  Unlike launch-admit, every failure here holds the launch: without the
+ *  claim a pool worker has no safe way to pick work, so an older store that
+ *  lacks the command must stop the pool rather than let it race. */
+export interface LaunchClaim {
+  act: 'launch' | 'idle' | 'deny';
+  how: 'claimed' | 'nothing_ready' | 'denied' | 'unsupported' | 'unavailable';
+  reason: string;
+  ticketId: string | null;
+  workflowAttemptId?: string;
+  admissionId?: string;
+}
+
+export function launchClaimArgs(l: LoopConfig, id: string): string[] {
+  return ['launch-claim', '--workstream', l.workstream, '--assignee', seatName(l), '--launch-id', id, ...(l.project ? ['--project', l.project] : [])];
+}
+
+export function launchClaim(g: GlobalConfig, l: LoopConfig, id: string): LaunchClaim {
+  // Written as the worker itself, never as the harness: Helmo records the
+  // claim against this session, which is what the seat guard and the replay
+  // fence both read.
+  try {
+    const res = run(g, launchClaimArgs(l, id), loopActor(l), true) as {
+      admitted?: boolean; claimed?: boolean; ticket_id?: string; workflow_attempt_id?: string | null; admission_id?: string | null;
+      launch_id?: string; scope?: { session?: string; assignee?: string; workstream?: string; project?: string | null };
+    };
+    if (res.admitted === false && res.claimed === undefined) return { act: 'idle', how: 'nothing_ready', reason: 'nothing ready to claim', ticketId: null };
+    // The receipt must name THIS worker's exact scope: a replayed id answered
+    // with someone else's claim would put this session on their ticket.
+    const exact = res.claimed === true && typeof res.ticket_id === 'string' && res.launch_id === id
+      && res.scope?.session === seatId(l) && res.scope.assignee === seatName(l)
+      && res.scope.workstream === l.workstream && (res.scope.project ?? undefined) === l.project
+      && Boolean(res.workflow_attempt_id) === Boolean(res.admission_id);
+    if (!exact) return { act: 'deny', how: 'unavailable', reason: `Helmo's claim receipt for ${id} did not match this worker`, ticketId: res.ticket_id ?? null };
+    return {
+      act: 'launch', how: 'claimed', ticketId: res.ticket_id!,
+      workflowAttemptId: res.workflow_attempt_id ?? undefined,
+      admissionId: res.admission_id ?? undefined,
+      reason: `claimed ${res.ticket_id}${res.admission_id ? ` admitted as ${res.admission_id}` : ''}`,
+    };
+  } catch (e) {
+    const raw = String((e as { stderr?: string | Buffer }).stderr ?? '').trim();
+    if (raw.includes('workflow_admission_denied')) {
+      let body: Record<string, unknown> = {};
+      try { body = JSON.parse(raw) as Record<string, unknown>; } catch { /* the message is the detail */ }
+      const ticketId = typeof body['ticket_id'] === 'string' ? body['ticket_id'] : null;
+      return { act: 'deny', how: 'denied', reason: deniedReason(body, ticketId), ticketId };
+    }
+    const detail = cliError(e).split('\n')[0]!.slice(0, 160);
+    return raw.startsWith('usage:') || /unknown (command|flag)/i.test(raw)
+      ? { act: 'deny', how: 'unsupported', reason: `this store has no launch-claim command, so pool worker '${l.name}' cannot run: ${detail}`, ticketId: null }
+      : { act: 'deny', how: 'unavailable', reason: `launch claim could not be asked: ${detail}`, ticketId: null };
+  }
+}
+
+/** Put down a claim this worker's launch took and its session did not settle,
+ *  so the ticket returns to the seat's ready queue for the next worker. Only a
+ *  ticket still in progress under this seat is touched; anything the session
+ *  moved (done, returned, handed off) is left as it was. Releasing keeps the
+ *  reservation (Helmo H-954), so the ticket stays the seat's. Returns whether
+ *  it released. */
+export function releaseClaim(g: GlobalConfig, l: LoopConfig, ticketId: string, why: string): boolean {
+  const t = run(g, ['get', ticketId]) as { status?: string; assignee?: string | null };
+  if (t.status !== 'in_progress' || t.assignee !== seatName(l)) return false;
+  run(g, ['update', '--ticket', ticketId, '--status', 'open', '--note', `Rev released ${seatId(l)}'s launch claim: ${why}`], loopActor(l), true);
+  return true;
+}
+
 /** A ticket's current status. A read, so no actor is needed. */
 export function ticketStatus(g: GlobalConfig, ticketId: string): string {
   return (run(g, ['get', ticketId]) as { status: string }).status;

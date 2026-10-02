@@ -156,7 +156,7 @@ export function resolveRef(
 
 /** The complete set of keys a [loops.<name>] table may carry. */
 const LOOP_KEYS = new Set([
-  'seat',
+  'seat', 'project',
   'workstream', 'cwd', 'constitution', 'version', 'pace', 'idle_floor_s',
   'runtime', 'model', 'provider', 'tier', 'probe_tier', 'probe_model', 'rotation', 'fallback', 'routing',
   'mcp_extra', 'skills', 'mock_cmd', 'burn_usd_per_hour', 'burn_usd_per_day', 'continue_cap',
@@ -216,6 +216,7 @@ export function loadRoster(): Roster {
       name,
       seat: String(l['seat'] ?? name),
       peer_sessions: [],
+      project: l['project'] === undefined ? undefined : String(l['project']),
       workstream: String(l['workstream']),
       cwd: expand(String(l['cwd'])),
       runtime: selection.primary.runtime,
@@ -240,6 +241,19 @@ export function loadRoster(): Roster {
     loop.peer_sessions = Object.values(loops)
       .filter((peer) => peer.seat === loop.seat)
       .map((peer) => `rev:${peer.name}`);
+  }
+  // A pool worker launches only on Helmo's atomic claim, which is scoped to
+  // one exact workstream, and edits only its own checkout: two workers in one
+  // writable cwd would overwrite each other however cleanly their tickets
+  // were split. Refused at load, so a misconfigured pool never starts.
+  for (const loop of Object.values(loops)) {
+    if (loop.peer_sessions.length < 2) {
+      if (loop.project !== undefined) throw new Error(`Loop '${loop.name}': 'project' scopes a pool worker's claims; it needs another loop sharing seat '${loop.seat}'.`);
+      continue;
+    }
+    if (loop.workstream === '*') throw new Error(`Loop '${loop.name}': a pool worker for seat '${loop.seat}' needs one exact workstream, not '*'.`);
+    const shared = Object.values(loops).find((peer) => peer !== loop && peer.seat === loop.seat && peer.cwd === loop.cwd);
+    if (shared) throw new Error(`Loops '${loop.name}' and '${shared.name}' share seat '${loop.seat}' and cwd ${loop.cwd}; each worker needs its own writable checkout.`);
   }
   return { global, loops, providers };
 }

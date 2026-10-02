@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadRoster } from '../src/config.js';
@@ -27,18 +27,42 @@ describe('roster skills (H-247)', () => {
 });
 
 describe('parallel workers', () => {
-  it('defaults one loop to one seat and groups explicitly shared workers by session', () => {
+  // extra is spliced in before cwd, so a test can override where a loop runs.
+  function roster(loops: [name: string, extra?: string][]): string {
     const home = mkdtempSync(join(tmpdir(), 'rev-cfg-'));
     writeFileSync(join(home, 'PROFILE.md'), '# Profile\n');
-    mkdirSync(join(home, 'work'));
-    const loop = (name: string, seat = '') => `[loops.${name}]\n${seat}workstream = "w"\ncwd = "${join(home, 'work')}"\nruntime = "mock"\nmodel = "m"\nconstitution = "${join(home, 'PROFILE.md')}"\n`;
-    writeFileSync(join(home, 'roster.toml'), `[global]\nhelmo_cli = "x"\nhelmo_mcp_server = "y"\n${loop('builder')}${loop('builder-2', 'seat = "builder"\n')}${loop('reviewer')}\n`);
+    const loop = ([name, extra = '']: [string, string?]) => `[loops.${name}]\n${extra}workstream = "w"\n${extra.includes('cwd') ? '' : `cwd = "${join(home, name)}"\n`}runtime = "mock"\nmodel = "m"\nconstitution = "${join(home, 'PROFILE.md')}"\n`;
+    writeFileSync(join(home, 'roster.toml'), `[global]\nhelmo_cli = "x"\nhelmo_mcp_server = "y"\n${loops.map(loop).join('')}\n`);
     process.env['REV_HOME'] = home;
+    return home;
+  }
+
+  it('defaults one loop to one seat and groups explicitly shared workers by session', () => {
+    roster([['builder'], ['builder-2', 'seat = "builder"\nproject = "R-29"\n'], ['reviewer']]);
     const loops = loadRoster().loops;
     expect(loops['builder']!.seat).toBe('builder');
     expect(loops['builder']!.peer_sessions).toEqual(['rev:builder', 'rev:builder-2']);
     expect(loops['builder-2']!.peer_sessions).toEqual(['rev:builder', 'rev:builder-2']);
+    expect(loops['builder-2']!.project).toBe('R-29');
+    expect(loops['builder']!.project).toBeUndefined();
     expect(loops['reviewer']!.peer_sessions).toEqual(['rev:reviewer']);
+  });
+
+  it('refuses two workers on one seat sharing a writable checkout (H-574)', () => {
+    roster([['builder', 'cwd = "/tmp/shared"\n'], ['builder-2', 'seat = "builder"\ncwd = "/tmp/shared"\n']]);
+    expect(() => loadRoster()).toThrow(/share seat 'builder' and cwd \/tmp\/shared/);
+  });
+
+  it('refuses a store-wide pool worker, whose claim has no exact workstream (H-574)', () => {
+    const home = roster([['builder'], ['builder-2', 'seat = "builder"\n']]);
+    const path = join(home, 'roster.toml');
+    writeFileSync(path, readFileSync(path, 'utf8').replace('[loops.builder-2]\nseat = "builder"\nworkstream = "w"', '[loops.builder-2]\nseat = "builder"\nworkstream = "*"'));
+    expect(() => loadRoster()).toThrow(/needs one exact workstream, not '\*'/);
+  });
+
+  it('refuses a project lane on a loop with no pool to schedule (H-574)', () => {
+    roster([['builder', 'project = "R-29"\n'], ['reviewer']]);
+    expect(() => loadRoster()).toThrow(/'project' scopes a pool worker's claims/);
   });
 });
 
