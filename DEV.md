@@ -131,6 +131,20 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   claim two workers race the same ticket. Nothing ready means `launch-idle`
   and no session. `project` is the worker's lane; it is refused on a loop
   with no pool.
+  **A role is addressed as a role** (H-676). The first worker usually keeps
+  the role's name, so `stop`/`resume`/`pace`/`team` resolve through
+  `controlTargets` (config.ts): a seat with more than one loop, or a seat no
+  loop is named after, reaches every worker of it, and `--worker` narrows it
+  to the one loop of exactly that name. Sentinels stay per loop; a role-level
+  halt is written to each worker. Anything that routes work to a role must ask
+  which worker can draw it: `drawsScope` (helm.ts) says a one-worker seat
+  draws its seat's work in any stream, a pool worker only in its exact
+  workstream and lane. The anomaly investigator is chosen with it and
+  assigned by seat, never by loop name — a pool worker's own name is no
+  assignee anything wakes on. `status --json` prints each loop's `seat`,
+  `pool`, `workstream` and `project` beside its state, for consumers outside
+  Rev (gp-crew's handoff guard) that must answer "can this role take this
+  ticket"; the human table is unchanged because estate tools parse its header.
   **Workflow launch admission** is the last gate before a session is spent
   (H-2561, helmo H-471): `launchAdmit` asks helm-cli `launch-admit --workstream
   W --assignee A --launch-id <identity>`, and Helmo picks the

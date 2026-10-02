@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadRoster } from '../src/config.js';
+import { controlTargets, loadRoster } from '../src/config.js';
 import { systemPrompt } from '../src/shim.js';
 
 describe('roster skills (H-247)', () => {
@@ -63,6 +63,18 @@ describe('parallel workers', () => {
   it('refuses a project lane on a loop with no pool to schedule (H-574)', () => {
     roster([['builder', 'project = "R-29"\n'], ['reviewer']]);
     expect(() => loadRoster()).toThrow(/'project' scopes a pool worker's claims/);
+  });
+
+  it('addresses a pooled role as every worker, and one worker only when asked (H-676)', () => {
+    roster([['builder'], ['builder-harness', 'seat = "builder"\n'], ['reviewer'], ['design', 'seat = "critic"\n']]);
+    const loops = loadRoster().loops;
+    expect(controlTargets(loops, 'builder')).toEqual(['builder', 'builder-harness']);
+    expect(controlTargets(loops, 'builder', true)).toEqual(['builder']);
+    expect(controlTargets(loops, 'builder-harness')).toEqual(['builder-harness']);
+    expect(controlTargets(loops, 'reviewer')).toEqual(['reviewer']);
+    expect(controlTargets(loops, 'critic')).toEqual(['design']);
+    expect(controlTargets(loops, 'critic', true)).toEqual([]);
+    expect(controlTargets(loops, 'missing')).toEqual([]);
   });
 });
 

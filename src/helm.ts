@@ -439,9 +439,20 @@ export function openEscalation(g: GlobalConfig, l: LoopConfig): string | null {
   return null;
 }
 
-export function investigatorFor(_g: GlobalConfig, stopped: LoopConfig): LoopConfig | null {
+/** Whether this loop would ever start a ticket reserved to its seat in this
+ *  scope (H-676). A one-worker seat draws its seat's work in any stream; a pool
+ *  worker launches only on Helmo's claim, which is scoped to its exact
+ *  workstream and project lane, so work outside them would sit reserved to a
+ *  live role that never picks it up. */
+export function drawsScope(l: LoopConfig, workstream: string, project: string | null = null): boolean {
+  if (!poolWorker(l)) return true;
+  return l.workstream === workstream && (l.project === undefined || l.project === project);
+}
+
+export function investigatorFor(g: GlobalConfig, stopped: LoopConfig): LoopConfig | null {
   for (const loop of Object.values(loadRoster().loops)) {
     if (loop.name === stopped.name || processObservation(loop.name).state !== 'alive') continue;
+    if (!drawsScope(loop, g.escalation_workstream)) continue;
     if ((['BLOCKED', 'STOP', 'HOLD', 'PARKED'] as const).some((s) => sHas(loop.name, s))) continue;
     return loop;
   }
@@ -562,7 +573,9 @@ export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, 
       '--workstream', g.escalation_workstream,
       '--type', 'ops',
       '--priority', investigator ? '0' : '1',
-      ...(investigator ? ['--assignee', investigator.name] : []),
+      // The seat, not the loop: workers draw by seat, and a pool worker's own
+      // name is no assignee anything wakes on (H-676).
+      ...(investigator ? ['--assignee', seatName(investigator)] : []),
     ],
     revActor(),
   ) as { id: string };

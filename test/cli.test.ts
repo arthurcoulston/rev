@@ -82,11 +82,73 @@ describe('Prime team control (H-2301)', () => {
     expect(readFileSync(join(gpHome, 'state', 'builder', 'STOP'), 'utf8')).toBe('');
   });
 
+  it('reaches every worker of a pooled role (H-676)', () => {
+    const home = mkdtempSync(join(tmpdir(), 'gp-team-role-'));
+    const gpHome = join(home, '.rev-gp'); mkdirSync(gpHome);
+    writeFileSync(join(gpHome, 'roster.toml'), `[global]\nhelmo_cli = "/tmp/h"\nhelmo_mcp_server = "/tmp/m"\n[loops.prime]\nworkstream="governance"\ncwd="/tmp/p"\nruntime="mock"\n[loops.builder]\nworkstream="goodplumb"\ncwd="/tmp/b"\nruntime="mock"\n[loops.builder-product]\nseat="builder"\nworkstream="goodplumb"\ncwd="/tmp/bp"\nruntime="mock"\n`);
+    expect(gp(home, ['team', 'stop', 'builder']).status).toBe(0);
+    expect(existsSync(join(gpHome, 'state', 'builder', 'STOP'))).toBe(true);
+    expect(existsSync(join(gpHome, 'state', 'builder-product', 'STOP'))).toBe(true);
+    expect(existsSync(join(gpHome, 'state', 'prime', 'STOP'))).toBe(false);
+    expect(gp(home, ['team', 'resume', 'builder']).status).toBe(0);
+    expect(existsSync(join(gpHome, 'state', 'builder-product', 'STOP'))).toBe(false);
+  });
+
   it('refuses non-Prime callers', () => {
     const home = mkdtempSync(join(tmpdir(), 'gp-team-auth-'));
     const gpHome = join(home, '.rev-gp'); mkdirSync(gpHome);
     writeFileSync(join(gpHome, 'roster.toml'), `[global]\nhelmo_cli="/tmp/h"\nhelmo_mcp_server="/tmp/m"\n`);
     expect(gp(home, ['team', 'stop', 'all'], false).status).toBe(1);
+  });
+});
+
+// H-676: with pool workers a role is several loops, and its first worker
+// usually keeps the role's name. A control aimed at the role has to reach all
+// of them; one aimed at a single worker has to leave its siblings alone.
+describe('role-level control of pool workers (H-676)', () => {
+  function pool(): string {
+    const home = mkdtempSync(join(tmpdir(), 'rev-pool-cli-'));
+    const loop = (name: string, extra = '') => `[loops.${name}]\n${extra}workstream = "w"\ncwd = "${join(home, name)}"\nruntime = "mock"\n`;
+    writeFileSync(join(home, 'roster.toml'), `[global]\nhelmo_cli = "/tmp/h"\nhelmo_mcp_server = "/tmp/m"\n${loop('builder')}${loop('builder-harness', 'seat = "builder"\nproject = "R-29"\n')}${loop('reviewer')}`);
+    return home;
+  }
+  const stopped = (home: string, name: string) => existsSync(join(home, 'state', name, 'STOP'));
+
+  it('stops and resumes every worker of a pooled role, and no other seat', () => {
+    const home = pool();
+    const stop = rev(home, ['stop', 'builder']);
+    expect(stop.status, stop.stderr).toBe(0);
+    expect(stop.stdout).toContain("STOP set for 'builder', 'builder-harness'");
+    expect([stopped(home, 'builder'), stopped(home, 'builder-harness'), stopped(home, 'reviewer')]).toEqual([true, true, false]);
+
+    writeFileSync(join(home, 'state', 'builder-harness', 'HOLD'), 'operator\n');
+    expect(rev(home, ['resume', 'builder']).status).toBe(0);
+    expect([stopped(home, 'builder'), stopped(home, 'builder-harness')]).toEqual([false, false]);
+    expect(existsSync(join(home, 'state', 'builder-harness', 'HOLD'))).toBe(false);
+  });
+
+  it('narrows to the one loop of that name with --worker', () => {
+    const home = pool();
+    expect(rev(home, ['stop', 'builder', '--worker']).status).toBe(0);
+    expect([stopped(home, 'builder'), stopped(home, 'builder-harness')]).toEqual([true, false]);
+    expect(rev(home, ['pace', 'builder-harness', 'park']).status).toBe(0);
+    expect(existsSync(join(home, 'state', 'builder', 'PACE'))).toBe(false);
+    expect(rev(home, ['pace', 'builder', 'park']).status).toBe(0);
+    expect(existsSync(join(home, 'state', 'builder', 'PACE'))).toBe(true);
+  });
+
+  it('prints each loop with its seat and claim scope under status --json', () => {
+    const home = pool();
+    rev(home, ['stop', 'builder-harness']);
+    const result = rev(home, ['status', '--json']);
+    expect(result.status, result.stderr).toBe(0);
+    const status = JSON.parse(result.stdout) as { supervisor: string; loops: Record<string, unknown>[] };
+    expect(status.supervisor).toBe('down');
+    expect(status.loops.map(({ loop, seat, pool, state, workstream, project }) => ({ loop, seat, pool, state, workstream, project }))).toEqual([
+      { loop: 'builder', seat: 'builder', pool: true, state: 'halted', workstream: 'w', project: null },
+      { loop: 'builder-harness', seat: 'builder', pool: true, state: 'STOP', workstream: 'w', project: 'R-29' },
+      { loop: 'reviewer', seat: 'reviewer', pool: false, state: 'halted', workstream: 'w', project: null },
+    ]);
   });
 });
 

@@ -1046,6 +1046,54 @@ mock_cmd = "true"
     expect(readFileSync(join(e.home, 'state', 'anomaly-loop', 'events.log'), 'utf8')).toMatch(/anomaly.*observed=\$7\.00 mean=\$1\.00/);
   });
 
+  it('hands an anomaly to the seat of a pool worker that can draw it, never a worker name (H-676)', () => {
+    const e = setup(`[providers.flat]
+runtime = "mock"
+billing = "subscription"
+[providers.flat.models]
+mid = "mock-mid"
+[loops.anomaly-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+provider = "flat"
+tier = "mid"
+mock_cmd = '''
+set -e
+ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
+node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
+echo "rev-mock-usage tokens=1000 cost_usd=7.00"
+'''
+
+[loops.review-lane]
+seat = "review"
+workstream = "rev"
+project = "R-1"
+cwd = "/tmp/lane"
+runtime = "mock"
+mock_cmd = "true"
+
+[loops.review-pool]
+seat = "review"
+workstream = "rev"
+cwd = "/tmp/pool"
+runtime = "mock"
+mock_cmd = "true"
+`);
+    for (const live of ['review-lane', 'review-pool']) {
+      mkdirSync(join(e.home, 'state', live), { recursive: true });
+      writeFileSync(join(e.home, 'state', live, 'RUNNING'), `${process.pid}\n`);
+    }
+    writeFileSync(join(e.home, 'token-log'), Array.from({ length: 5 }, (_, i) =>
+      `2026-09-29T0${i}:00:00.000Z loop=anomaly-loop runtime=mock model=mock-mid tokens=100 cost_usd=1\n`,
+    ).join(''));
+    seedTicket(e, 'Work whose cost shape runs away under a pooled investigator');
+    rev(e, ['run', 'anomaly-loop', '--count', '1']);
+
+    const detail = JSON.parse(readFileSync(join(e.home, 'state', 'anomaly-loop', 'BLOCKED.json'), 'utf8')) as { investigation_ticket: string };
+    expect(helm(e, ['get', detail.investigation_ticket])).toMatchObject({ status: 'open', assignee: 'review', priority: 0 });
+  });
+
   it('keeps an anomaly blocked and alarms the operator when no investigator is live (H-188)', () => {
     const e = setup(`[providers.flat]
 runtime = "mock"

@@ -258,6 +258,18 @@ export function loadRoster(): Roster {
   return { global, loops, providers };
 }
 
+/** The loops a control command's name reaches (H-676). With pool workers a
+ *  role is no longer one loop, and its first worker usually keeps the role's
+ *  name, so `stop builder` reading only loop `builder` would leave every other
+ *  builder running. A seat name therefore addresses the whole role whenever
+ *  more than one loop sits in it, or no loop carries that name; `worker`
+ *  narrows it back to the one loop of exactly that name. Empty means unknown. */
+export function controlTargets(loops: Record<string, LoopConfig>, name: string, worker = false): string[] {
+  const role = Object.values(loops).filter((l) => l.seat === name).map((l) => l.name);
+  if (!worker && role.length > 0 && (role.length > 1 || !loops[name])) return role;
+  return loops[name] ? [name] : [];
+}
+
 /** A loop names where it runs either the v0 way (runtime + model strings) or
  *  the tiered way (provider/tier against the roster's providers tables), plus
  *  an optional rotation cycle and quota fallbacks (H-479). Everything is

@@ -4,7 +4,7 @@
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildLine, compare, parseMarker, runningLine, snapshot } from './build.js';
-import { loadRoster, resolveRef, stateDir } from './config.js';
+import { controlTargets, loadRoster, resolveRef, stateDir } from './config.js';
 import { sessionSpec } from './shim.js';
 import { LoopConfig } from './types.js';
 import { pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageLine, usagePath } from './usage.js';
@@ -115,19 +115,19 @@ function cliActor(): { label: string; human: boolean } {
 
 const COMMAND_HELP: Record<string, string> = {
   run: `usage: ${commandName} run [<loop> [--count N]]`,
-  stop: `usage: ${commandName} stop [<loop>]`,
-  resume: `usage: ${commandName} resume <loop>`,
+  stop: `usage: ${commandName} stop [<loop|role> [--worker]]`,
+  resume: `usage: ${commandName} resume <loop|role> [--worker]`,
   service: `usage: ${commandName} service <install|uninstall|start|status>`,
   install: `usage: ${commandName} install remove [--confirm]`,
   release: `usage: ${commandName} release <status | upgrade <release directory> | rollback | activate>`,
   redeploy: `usage: ${commandName} redeploy [--ticket <id>] [--reason "<why>"]`,
-  pace: `usage: ${commandName} pace <loop> <fraction (0,1] | park | clear>`,
+  pace: `usage: ${commandName} pace <loop|role> <fraction (0,1] | park | clear> [--worker]`,
   usage: `usage: ${commandName} usage [--poll]`,
   routing: `usage: ${commandName} routing`,
-  status: `usage: ${commandName} status`,
+  status: `usage: ${commandName} status [--json]`,
   tail: `usage: ${commandName} tail <loop>`,
   'session-spec': `usage: ${commandName} session-spec <seat> --session <actor stamp> [--provider claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]`,
-  team: `usage: ${commandName} team <stop|resume> <loop|all>`,
+  team: `usage: ${commandName} team <stop|resume> <loop|role|all> [--worker]`,
   intake: `usage: ${commandName} intake result goodplumb@<40-hex-commit>`,
 };
 
@@ -172,6 +172,32 @@ function knownLoop(name: string): string {
   return name;
 }
 
+// Control commands take a role as well as a loop (H-676): a seat shared by
+// pool workers reaches every one of them, and `--worker` narrows it to the
+// single loop of that name. See controlTargets in config.ts.
+const worker = rest.includes('--worker');
+const controlArgs = rest.filter((a) => a !== '--worker');
+
+function controlTargetsOf(name: string): string[] {
+  const names = controlTargets(loops, name, worker);
+  if (!names.length) {
+    console.error(`Unknown loop '${name}'. Roster has: ${Object.keys(loops).join(', ') || '(none)'}`);
+    process.exit(1);
+  }
+  return names;
+}
+
+function controlArg(): string[] {
+  const name = controlArgs[0];
+  if (!name) {
+    console.error(`usage: ${commandName} ${cmd} <loop|role>`);
+    process.exit(1);
+  }
+  return controlTargetsOf(name);
+}
+
+const listed = (names: string[]) => names.map((n) => `'${n}'`).join(', ');
+
 function state(name: string): string {
   const observation = processObservation(name);
   const pid = observation.pid;
@@ -210,13 +236,13 @@ switch (cmd) {
       console.error('team control is available only to Prime through gp-rev.');
       process.exit(1);
     }
-    const verb = rest[0];
-    const target = rest[1];
+    const verb = controlArgs[0];
+    const target = controlArgs[1];
     if (!['stop', 'resume'].includes(verb ?? '') || !target) {
       console.error(COMMAND_HELP.team);
       process.exit(1);
     }
-    const names = target === 'all' ? Object.keys(loops) : [knownLoop(target)];
+    const names = target === 'all' ? Object.keys(loops) : controlTargetsOf(target);
     console.log(targetLine(requireTarget(`${commandName} team ${verb}`)));
     if (verb === 'stop') {
       const result = teamStop(names);
@@ -294,9 +320,28 @@ switch (cmd) {
     break;
   }
   case 'status': {
-    console.log(targetLine());
     const supervisor = processObservation('supervisor');
     const sup = supervisor.pid;
+    // The machine-readable table (H-676). With pool workers a role is several
+    // loops, so a liveness check asking "can builder take this?" needs each
+    // loop's seat and claim scope, which the human table does not print. The
+    // table stays as it is: four estate tools parse its header exactly.
+    if (rest.includes('--json')) {
+      console.log(JSON.stringify({
+        installation: target('unchecked').label, home: target('unchecked').home,
+        supervisor: supervisor.state === 'unknown' ? 'unobservable' : sup ? 'running' : 'down',
+        loops: Object.values(loops).map((l) => {
+          const pending = sPendingPid(l.name);
+          return {
+            loop: l.name, seat: l.seat ?? l.name, pool: (l.peer_sessions?.length ?? 0) > 1,
+            state: state(l.name), pid: pidAlive(l.name), pace: pending ? `pending:${pending}` : (sValue(l.name, 'PACE') ?? '1'),
+            workstream: l.workstream, project: l.project ?? null,
+          };
+        }),
+      }, null, 2));
+      break;
+    }
+    console.log(targetLine());
     // Provenance of the artifact, then of the process — never the same claim
     // (H-2489). A rebuild under a live supervisor makes the first current and
     // the second stale, and reading only the first is how H-2432 reported a
@@ -323,7 +368,7 @@ switch (cmd) {
     break;
   }
   case 'stop': {
-    const name = rest[0];
+    const name = controlArgs[0];
     if (!name) {
       // Graceful stop-all: drain the supervisor. In-flight iterations finish
       // their close-out; no STOP sentinels are written, so the next `rev run`
@@ -338,30 +383,35 @@ switch (cmd) {
       console.log(`Drain requested (SIGTERM to supervisor pid ${sup}) — in-flight iterations finish, then the machine stops. Watch: ${commandName} status`);
       break;
     }
-    knownLoop(name);
+    const names = controlTargetsOf(name);
     console.log(targetLine(requireTarget(`stop '${name}'`)));
     const actor = cliActor();
-    sSetOwned(name, 'STOP', { value: '', by: actor.human ? 'human' : actor.label, at: new Date().toISOString(), pid: process.pid, reason: `${commandName} stop`, expires_at: 'never' });
-    logEvent(name, actor.label, 'STOP set');
+    for (const n of names) {
+      sSetOwned(n, 'STOP', { value: '', by: actor.human ? 'human' : actor.label, at: new Date().toISOString(), pid: process.pid, reason: `${commandName} stop ${name}`, expires_at: 'never' });
+      logEvent(n, actor.label, 'STOP set');
+    }
     const sup = pidAlive('supervisor');
     console.log(
-      `STOP set for '${name}' — halts cleanly after any in-flight iteration.` +
+      `STOP set for ${listed(names)} — halts cleanly after any in-flight iteration.` +
         (sup ? ` The supervisor leaves it down until: ${commandName} resume ${name}` : ` Resume: ${commandName} resume ${name} (then ${commandName} run ${name}).`),
     );
     break;
   }
   case 'resume': {
-    const name = loopArg();
+    const names = controlArg();
+    const name = controlArgs[0]!;
     console.log(targetLine(requireTarget(`resume '${name}'`)));
-    sClear(name, 'STOP', 'HOLD', 'BLOCKED');
-    // A resume is a statement the cause was looked at: the loop gets its full
-    // retry budget back. Carrying the streak over made resume a single retry
-    // that re-blocked in seconds and filed a duplicate escalation (H-401).
-    streakReset(name, 'fail', 'limit');
-    logEvent(name, cliActor().label, 'STOP/HOLD/BLOCKED cleared; fail/limit streaks reset');
+    for (const n of names) {
+      sClear(n, 'STOP', 'HOLD', 'BLOCKED');
+      // A resume is a statement the cause was looked at: the loop gets its full
+      // retry budget back. Carrying the streak over made resume a single retry
+      // that re-blocked in seconds and filed a duplicate escalation (H-401).
+      streakReset(n, 'fail', 'limit');
+      logEvent(n, cliActor().label, 'STOP/HOLD/BLOCKED cleared; fail/limit streaks reset');
+    }
     const sup = pidAlive('supervisor');
     console.log(
-      `Halt sentinels cleared for '${name}'.` +
+      `Halt sentinels cleared for ${listed(names)}.` +
         (sup ? ` The supervisor picks it back up within ${g.poll_seconds}s.` : ` Start it with: ${commandName} run ${name}`),
     );
     break;
@@ -503,18 +553,21 @@ switch (cmd) {
     break;
   }
   case 'pace': {
-    const name = loopArg();
-    const v = rest[1];
+    const names = controlArg();
+    const name = controlArgs[0]!;
+    const v = controlArgs[1];
     if (!v) {
-      console.error(`usage: ${commandName} pace <loop> <fraction (0,1] | park | clear>`);
+      console.error(`usage: ${commandName} pace <loop|role> <fraction (0,1] | park | clear>`);
       process.exit(1);
     }
     console.log(targetLine(requireTarget(`set the pace of '${name}'`)));
     const actor = cliActor();
-    if (v === 'clear') sClear(name, 'PACE');
-    else sSetOwned(name, 'PACE', { value: v, by: actor.human ? 'human' : actor.label, at: new Date().toISOString(), pid: process.pid, reason: `${commandName} pace`, expires_at: actor.human ? 'never' : new Date(Date.now() + 60 * 60 * 1000).toISOString() });
-    logEvent(name, actor.label, `PACE=${v}`);
-    console.log(`PACE ${v === 'clear' ? 'cleared' : `set to ${v}`} for '${name}' (picked up within one poll).`);
+    for (const n of names) {
+      if (v === 'clear') sClear(n, 'PACE');
+      else sSetOwned(n, 'PACE', { value: v, by: actor.human ? 'human' : actor.label, at: new Date().toISOString(), pid: process.pid, reason: `${commandName} pace`, expires_at: actor.human ? 'never' : new Date(Date.now() + 60 * 60 * 1000).toISOString() });
+      logEvent(n, actor.label, `PACE=${v}`);
+    }
+    console.log(`PACE ${v === 'clear' ? 'cleared' : `set to ${v}`} for ${listed(names)} (picked up within one poll).`);
     break;
   }
   case 'usage': {
@@ -623,12 +676,13 @@ switch (cmd) {
   run                      start the machine: supervise every roster loop (respawn, backoff, drain)
   run <loop> [--count N]   drive one loop in the foreground (debugging; --count 1 = assess early)
   stop                     graceful stop-all: drain the supervisor, iterations finish first
-  stop <loop>              set STOP — clean halt after the in-flight iteration
-  resume <loop>            clear STOP/HOLD/BLOCKED; a running supervisor picks the loop back up
-  pace <loop> <v>          velocity: fraction (0,1], 'park', or 'clear'
+  stop <loop|role>         set STOP — clean halt after the in-flight iteration; a pooled
+                           role reaches every worker of its seat, --worker only that loop
+  resume <loop|role>       clear STOP/HOLD/BLOCKED; a running supervisor picks the loop back up
+  pace <loop|role> <v>     velocity: fraction (0,1], 'park', or 'clear'
   usage [--poll]           Max plan usage bars (session, weekly, per-model)
   routing                  preview working-model choices from current usage (no runs)
-  status                   supervisor + every loop's state at a glance
+  status [--json]          supervisor + every loop's state at a glance; --json adds seat and claim scope
   session-spec <seat>      the composed session as JSON (model, cwd, skills, MCP, env) — reads nothing else
   service <verb>           install|uninstall|start|status — survive reboots (launchd/systemd)
   install remove           delete this installation's records, controls and selection (no undo; --confirm)
