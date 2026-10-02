@@ -40,6 +40,16 @@ constitution is behavioral guidance, and the roster's MCP list does not restrict
 or network access. The user account's permissions are the effective security boundary.
 `rev service install` makes all of this start at login.
 Register a loop only for a folder and a workstream you would hand an unattended agent.
+One accountable role may have multiple workers by giving additional loop
+entries distinct names and writable `cwd` paths and setting `seat` to the
+role name. Worker state, launch identity and spend remain per loop; Helmo
+authorship and ticket ownership remain on the seat. Such pool workers need a
+Helmo with `launch-claim`: each launch is handed one atomically claimed ticket
+(optionally only from its `project` lane or an exact `tickets` allowlist)
+instead of choosing from the queue,
+and work a worker leaves unfinished is resumed by that same worker's next
+launch. `rev stop <role>`, `resume` and `pace` reach every worker of the
+role; add `--worker` to address only the loop of that exact name.
 
 ## The shape of it
 

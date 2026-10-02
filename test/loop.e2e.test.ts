@@ -44,8 +44,11 @@ function helm(e: Env, args: string[], actor = '{"name":"seeder","kind":"agent","
   ) as Record<string, unknown>;
 }
 
+// node --import tsx, not npx tsx: the same loader without npx's ~0.4s of
+// package resolution on every run, which the multi-run tests pay four times
+// over (H-675). The SIGKILL test keeps its own spawn below.
 function rev(e: Env, args: string[]): string {
-  return execFileSync('npx', ['tsx', REV_CLI, ...args], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+  return execFileSync('node', ['--import', 'tsx', REV_CLI, ...args], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
 }
 
 function seedTicket(e: Env, title: string): string {
@@ -194,7 +197,13 @@ process.exit(result.status ?? 1);
 // on a quiet machine, and vitest runs test FILES in parallel — adding one
 // more e2e file elsewhere in the suite is enough to push them over (found
 // while landing H-1089). Budget for the suite's own load, not the quiet case.
-describe('rev e2e (mock runtime, real helm store)', { timeout: 30000 }, () => {
+// Each `rev run` is ~16 serial helmo-cli processes, so wall time scales with
+// host load, not with anything the test waits on (H-675). The three-decline
+// quarantine test, 69 spawns, measured 11.3s at load 8, 15.6-24.3s at load
+// 10-19 and 26.8s solo at load 24 — the same on the pre-H-574 base — and hit
+// 30.5s in a full suite on a busy host, where H-187 also reached 29.1s.
+// 60s is twice the worst measured; a hang still fails here.
+describe('rev e2e (mock runtime, real helm store)', { timeout: 60000 }, () => {
   it.each([
     ['missing', { error: 'workflow_admission_denied', ticket_id: 'H-1', missing: ['requirement:technical'], stale: [], failed: [] }],
     ['stale', { error: 'workflow_admission_denied', ticket_id: 'H-1', missing: [], stale: ['manifest:input'], failed: [] }],
@@ -1037,6 +1046,54 @@ mock_cmd = "true"
     expect(readFileSync(join(e.home, 'state', 'anomaly-loop', 'events.log'), 'utf8')).toMatch(/anomaly.*observed=\$7\.00 mean=\$1\.00/);
   });
 
+  it('hands an anomaly to the seat of a pool worker that can draw it, never a worker name (H-676)', () => {
+    const e = setup(`[providers.flat]
+runtime = "mock"
+billing = "subscription"
+[providers.flat.models]
+mid = "mock-mid"
+[loops.anomaly-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+provider = "flat"
+tier = "mid"
+mock_cmd = '''
+set -e
+ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
+node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
+echo "rev-mock-usage tokens=1000 cost_usd=7.00"
+'''
+
+[loops.review-lane]
+seat = "review"
+workstream = "rev"
+project = "R-1"
+cwd = "/tmp/lane"
+runtime = "mock"
+mock_cmd = "true"
+
+[loops.review-pool]
+seat = "review"
+workstream = "rev"
+cwd = "/tmp/pool"
+runtime = "mock"
+mock_cmd = "true"
+`);
+    for (const live of ['review-lane', 'review-pool']) {
+      mkdirSync(join(e.home, 'state', live), { recursive: true });
+      writeFileSync(join(e.home, 'state', live, 'RUNNING'), `${process.pid}\n`);
+    }
+    writeFileSync(join(e.home, 'token-log'), Array.from({ length: 5 }, (_, i) =>
+      `2026-09-29T0${i}:00:00.000Z loop=anomaly-loop runtime=mock model=mock-mid tokens=100 cost_usd=1\n`,
+    ).join(''));
+    seedTicket(e, 'Work whose cost shape runs away under a pooled investigator');
+    rev(e, ['run', 'anomaly-loop', '--count', '1']);
+
+    const detail = JSON.parse(readFileSync(join(e.home, 'state', 'anomaly-loop', 'BLOCKED.json'), 'utf8')) as { investigation_ticket: string };
+    expect(helm(e, ['get', detail.investigation_ticket])).toMatchObject({ status: 'open', assignee: 'review', priority: 0 });
+  });
+
   it('keeps an anomaly blocked and alarms the operator when no investigator is live (H-188)', () => {
     const e = setup(`[providers.flat]
 runtime = "mock"
@@ -1170,6 +1227,23 @@ mock_cmd = '${CAPTURE_PROMPT}'
     expect(prompt).toContain("Spending cap for 'rev-test': none (budget_usd 0 sentinel); $12.00 measured spend disclosed. Runnable work remains runnable.");
     expect(prompt).not.toContain('budget exhausted');
     expect(prompt).not.toContain('$-12.00 remains');
+  });
+
+  it('names only the supervisor\'s own CLI for a redeploy, never a bare rev (H-646)', () => {
+    const e = setup(`[loops.deploy-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '${CAPTURE_PROMPT}; printf %s "$REV_CLI" > "$REV_HOME/rev-cli.txt"'
+`);
+    seedTicket(e, 'Work that may need a redeploy');
+    rev(e, ['run', 'deploy-loop', '--count', '1']);
+    const prompt = promptOf(e);
+    expect(prompt).toContain(`run 'node $REV_CLI redeploy --ticket <id> --reason "<why>"'`);
+    expect(prompt).not.toMatch(/run 'rev redeploy/);
+    // The variable the prompt names is the CLI this supervisor runs, so the
+    // instruction reaches this installation whatever `rev` means on PATH.
+    expect(readFileSync(join(e.home, 'rev-cli.txt'), 'utf8')).toBe(REV_CLI);
   });
 
   it('steering names every stream the seat holds work in, not just the one it watches (H-954)', () => {

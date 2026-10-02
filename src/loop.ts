@@ -4,7 +4,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir, tokenLogPath } from './config.js';
-import { LaunchAdmission, WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, launchAdmit, launchId, launchQuarantine, launchReceipt, launchRevalidate, openEscalation, readyTicketIds, recordSpend, scopeLabel, seatHolds, seatId, seatStreams, wakeCheck, workstreamInfo } from './helm.js';
+import { LaunchAdmission, LaunchClaim, WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, launchAdmit, launchClaim, launchId, launchQuarantine, launchReceipt, launchRevalidate, openEscalation, poolWorker, readyTicketIds, recordSpend, releaseClaim, scopeLabel, seatHolds, seatId, seatName, seatStreams, ticketStatus, wakeCheck, workstreamInfo } from './helm.js';
 import { burnWindow, markBurnFloor, recentCosts } from './burn.js';
 import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage, refreshFor, usageForModel } from './usage.js';
 import { anomalyDecide, capacityDecide, planPointsConsumed } from './capacity.js';
@@ -15,7 +15,7 @@ import { logEvent, occupiedPid, paceAutoRelease, pidAlive, runningStamp, sClear,
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig, RunChoice } from './types.js';
-import { recordLaunchAdmission, recordLaunchDispatch, recordLaunchIntent, settleLaunch, unsettledLaunches } from './launch-journal.js';
+import { launchGroupFile, launchSessionRunning, readLaunch, recordLaunchAdmission, recordLaunchClaim, recordLaunchDispatch, recordLaunchIntent, settleLaunch, unsettledLaunches } from './launch-journal.js';
 
 const sleep = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
 
@@ -111,22 +111,56 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   // A prior process that died after admission left an ambiguous boundary.
   // Quarantine only that workflow attempt; ordinary work and sibling branches
   // remain runnable. Failed quarantine stays journaled for the next restart.
-  for (const recovered of unsettledLaunches(l.name)) {
-    if (!recovered.admission_id) continue;
-    try {
-      launchQuarantine(g, recovered.admission_id, recovered.launch_id, `Rev recovered an unsettled ${recovered.phase} launch after process restart.`);
-      settleLaunch(l.name, recovered.launch_id, 'quarantined');
-      logEvent(l.name, 'launch-quarantined', `${recovered.launch_id} recovered ${recovered.phase}`);
-    } catch (e) {
-      logEvent(l.name, 'launch-quarantine-failed', `${recovered.launch_id} ${String(e).split('\n')[0]!.slice(0, 160)}`);
+  // A pool worker's claim is NOT put back (H-574): unfinished work stays with
+  // the worker that holds it. Its journal entry settles here, and this
+  // worker's next launch-claim resumes the ticket under a new generation,
+  // which Helmo retires the dead launch's generation for in the same
+  // transaction — so a child that outlived its loop can write nothing more.
+  // That fence covers the record, not the workspace (H-685): a session whose
+  // group is still running holds its entry unsettled, and this worker
+  // launches nothing until it has gone. It is never killed here; its
+  // generation is still current, so what it finishes is valid work.
+  // A claim asked but never answered is not settled here either (H-686): the
+  // claim block asks Helmo again under that same launch id before any other.
+  // A kept claim's workflow admission is not quarantined either (H-687): the
+  // resume revalidates it, and a quarantine would refuse the very resume
+  // that keeps the work with this worker, leaving it held by nobody.
+  const runningSessions = new Set<string>();
+  const recoverLaunches = (only?: Set<string>): void => {
+    for (const recovered of unsettledLaunches(l.name)) {
+      if (!recovered.admission_id && !recovered.claim) continue;
+      if (recovered.claim && recovered.phase === 'intent') continue;
+      if (only && !only.has(recovered.launch_id)) continue;
+      const session = launchSessionRunning(l.name, recovered);
+      if (session.running) {
+        if (!runningSessions.has(recovered.launch_id)) logEvent(l.name, 'launch-session-running', `${recovered.launch_id} ${session.why}; launches held until it ends`);
+        runningSessions.add(recovered.launch_id);
+        continue;
+      }
+      runningSessions.delete(recovered.launch_id);
+      try {
+        if (recovered.admission_id && !recovered.claim) {
+          launchQuarantine(g, recovered.admission_id, recovered.launch_id, `Rev recovered an unsettled ${recovered.phase} launch after process restart.`);
+        }
+        if (recovered.claim) {
+          logEvent(l.name, 'claim-kept', `${recovered.ticket_id ?? 'unanswered claim'} recovered ${recovered.phase}; the next launch resumes it`);
+        }
+        settleLaunch(l.name, recovered.launch_id, 'quarantined');
+        logEvent(l.name, 'launch-quarantined', `${recovered.launch_id} recovered ${recovered.phase}`);
+      } catch (e) {
+        logEvent(l.name, 'launch-quarantine-failed', `${recovered.launch_id} ${String(e).split('\n')[0]!.slice(0, 160)}`);
+      }
     }
-  }
+  };
+  recoverLaunches();
 
   let i = 0;
   let durWindow: number[] = [];
   let tAvg = 0;
   let firstPoll = true; // restart pickup: see the wake gate below (H-426)
   let seatHeld = false; // same-seat guard episode flag: log once per hold, not per poll (H-558)
+  let sessionHeld = false; // dead launch's session still running: same, per hold (H-685)
+  let claimUnanswered = false; // a claim awaiting Helmo's answer: same, per wait (H-686)
   const lineage = ancestryStamp();
 
   // Bounded runs and the iteration ceiling. A helper because an iteration can
@@ -254,6 +288,23 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       }
     }
 
+    // A dead launch's session still running here (H-685): like the seat guard,
+    // this waits on a process, not on the queue, so it neither idles at a
+    // cursor nor spends an iteration. recoverLaunches settles each entry once
+    // its group has gone, and the next pass launches.
+    if (runningSessions.size) recoverLaunches(new Set(runningSessions));
+    if (runningSessions.size) {
+      if (!sessionHeld) {
+        sessionHeld = true;
+        console.log(`rev: '${l.name}' holding launches — a session of dead launch ${[...runningSessions].join(', ')} is still running in its workspace. Polling until it ends.`);
+      }
+      await sleep(g.poll_seconds);
+      continue;
+    }
+    if (sessionHeld) {
+      sessionHeld = false;
+      logEvent(l.name, 'launch-session-ended', 'the dead launch\'s session has ended; launching resumes');
+    }
     const before = tryWakeCheck(g, l, 0);
     if (!before) {
       await sleep(g.poll_seconds);
@@ -271,7 +322,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         claimSession: h.claim_actor?.session ?? null,
         ageSeconds: h.claimed_at && Number.isFinite(Date.parse(h.claimed_at)) ? Math.max(0, (Date.now() - Date.parse(h.claimed_at)) / 1000) : null,
       }));
-      const seat = seatDecide({ holds, seat: seatId(l), staleSeconds: g.seat_stale_seconds });
+      const seat = seatDecide({ holds, sessions: l.peer_sessions ?? [seatId(l)], staleSeconds: g.seat_stale_seconds });
       if (seat.act === 'stand_down') {
         sSet(l.name, 'SEAT_HELD', seat.reason);
         if (!seatHeld) {
@@ -307,7 +358,10 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     let journaledLaunchId: string | null = null;
     let admission: LaunchAdmission;
     try {
-      admission = launchAdmit(g, l, thisLaunchId, (candidate, stableLaunchId) => recordLaunchIntent(l.name, stableLaunchId, candidate));
+      // A pool worker is admitted by its claim, taken just before dispatch.
+      admission = poolWorker(l)
+        ? { act: 'launch', how: 'nothing_gated', reason: 'pool worker claims at dispatch', ticketId: null }
+        : launchAdmit(g, l, thisLaunchId, (candidate, stableLaunchId) => recordLaunchIntent(l.name, stableLaunchId, candidate));
       if (admission.how === 'admitted' && admission.admissionId && admission.workflowAttemptId && admission.launchId) {
         recordLaunchAdmission(l.name, launchReceipt(g, admission.admissionId, admission.launchId));
         journaledLaunchId = admission.launchId;
@@ -437,6 +491,88 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         return;
       }
     }
+    // Pool workers (H-574): the claim is taken here, after every capacity exit
+    // above and before a run is logged or anything spent, so no early return
+    // can strand it.
+    // Helmo selects, admits and claims in one transaction; the session is then
+    // told the ticket rather than choosing one, because a sibling worker on
+    // the same seat is reading the same queue.
+    let claimedTicket: string | null = null;
+    let resumedClaim = false;
+    if (poolWorker(l)) {
+      let claim: LaunchClaim | null = null;
+      // A claim whose reply was lost (H-686) — a timeout, a dropped pipe, a
+      // process that died before reading it — may have committed. It is
+      // reconciled by its own identity: Helmo answers the same id with the
+      // receipt it granted while that claim still stands, claims afresh under
+      // it if the first ask never landed, and refuses it as stale once the
+      // claim has ended or moved on, which alone lets this launch take a new
+      // id. Until Helmo answers, every iteration asks under the old id.
+      let claimLaunchId = thisLaunchId;
+      try {
+        const unanswered = unsettledLaunches(l.name)
+          .filter((j) => j.claim && j.phase === 'intent')
+          .sort((a, b) => a.intent_at.localeCompare(b.intent_at))[0];
+        if (unanswered) claimLaunchId = unanswered.launch_id;
+        recordLaunchIntent(l.name, claimLaunchId, { claim: true });
+        claim = launchClaim(g, l, claimLaunchId);
+        if (unanswered) logEvent(l.name, 'claim-reconciled', `${claimLaunchId} ${claim.how === 'stale' ? claim.reason : `answered ${claim.reason}`}`);
+        if (claim.how === 'stale' && unanswered) {
+          settleLaunch(l.name, claimLaunchId, 'quarantined');
+          claimLaunchId = thisLaunchId;
+          recordLaunchIntent(l.name, claimLaunchId, { claim: true });
+          claim = launchClaim(g, l, claimLaunchId);
+        }
+        if (claim.how === 'claimed') {
+          // A resumed workflow claim carries the admission its FIRST launch
+          // consumed; its receipt belongs to that earlier launch id, so this
+          // launch journals the claim only, and checks authority by the pair
+          // Helmo names (H-687). A store that names none revalidated at
+          // resume, and that is the check this launch relies on.
+          const admissionId = claim.resumed ? (claim.admissionLaunchId ? claim.admissionId : undefined) : claim.admissionId;
+          if (admissionId && !claim.resumed) recordLaunchAdmission(l.name, launchReceipt(g, admissionId, claimLaunchId));
+          else recordLaunchClaim(l.name, claimLaunchId, claim.ticketId!);
+          journaledLaunchId = claimLaunchId;
+          claimedTicket = claim.ticketId;
+          resumedClaim = claim.resumed === true;
+          admission = { ...admission, act: 'launch', how: 'admitted', reason: claim.reason, ticketId: claim.ticketId, admissionId, workflowAttemptId: claim.workflowAttemptId, launchId: claim.admissionLaunchId ?? claimLaunchId };
+          logEvent(l.name, 'launch-claimed', claim.reason);
+        } else if (claim.how !== 'unavailable') {
+          // Nothing was claimed, so there is nothing for a restart to resolve.
+          settleLaunch(l.name, claimLaunchId, 'complete');
+        }
+      } catch (e) {
+        if (claim?.how === 'claimed' && claim.ticketId) {
+          try { releaseClaim(g, l, claim.ticketId, claimLaunchId, `its launch could not be journaled`); } catch { /* the intent stays journaled for restart recovery */ }
+        }
+        claim = { act: 'deny', how: 'unavailable', ticketId: null, reason: `launch claim could not be persisted: ${String(e).split('\n')[0]!.slice(0, 160)}` };
+      }
+      // A claim still unanswered waits on Helmo, not on the queue: the claim
+      // may hold a ticket no sibling can take, and this worker's own write is
+      // not motion that would wake it. So it neither idles at a cursor nor
+      // spends an iteration; it asks again under the same id next poll.
+      let unanswered = false;
+      if (!claimedTicket && claim.how === 'unavailable') {
+        try { unanswered = readLaunch(l.name, claimLaunchId)?.phase === 'intent'; } catch { /* unreadable: idle as before */ }
+      }
+      if (unanswered) {
+        if (!claimUnanswered) logEvent(l.name, 'launch-denied', `${claim.reason}; asking again as ${claimLaunchId}`);
+        claimUnanswered = true;
+        i -= 1;
+        await sleep(g.poll_seconds);
+        continue;
+      }
+      claimUnanswered = false;
+      if (!claimedTicket) {
+        logEvent(l.name, claim.act === 'idle' ? 'launch-idle' : 'launch-denied', claim.reason);
+        if (claim.act !== 'idle') console.log(`rev: pool worker '${l.name}' was not admitted to launch — ${claim.reason}`);
+        sSet(l.name, 'IDLE', `${before.max_seq}\n${claim.reason}\n`);
+        sSet(l.name, 'IDLE_AT', String(Date.now()));
+        if (countReached()) return;
+        await sleep(g.poll_seconds);
+        continue;
+      }
+    }
     // The probe tier (H-412): nothing ready and nothing in hand means this
     // iteration can only read the queue and stop, so it runs on the cheap
     // model. Decided per iteration from the fresh wake-check, never sticky.
@@ -445,7 +581,8 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     const probe = probeDecide({
       probeModel: choice.probe_model,
       workstream: l.workstream,
-      readyCount: before.ready_count,
+      // A claimed ticket is work in hand, whatever the earlier read saw.
+      readyCount: claimedTicket ? Math.max(1, before.ready_count) : before.ready_count,
       heldCount: before.held_count,
       pinned: g.probe,
       pinnedExhausted: g.probe ? exhaustedChoice(g.probe) : undefined,
@@ -488,8 +625,27 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     // updates; evidence walked through the next one. The instruction is the fix,
     // not a narrower filter: the commit proving a build green is exactly the
     // evidence a ticket should carry when work HAS advanced.
-    const draw =
-      l.workstream === '*'
+    // A workflow-bound claim is never put back (H-687): its attempt has spent
+    // its one launch admission, so an open ticket would be refused to every
+    // worker that drew it. It stays held, and the next launch resumes it.
+    const putDown = (why: string) => {
+      if (!claimedTicket || !journaledLaunchId) return;
+      if (admission.admissionId || admission.workflowAttemptId) {
+        logEvent(l.name, 'claim-kept', `${claimedTicket} ${why}; workflow-bound, so the next launch resumes it`);
+        return;
+      }
+      try {
+        if (releaseClaim(g, l, claimedTicket, journaledLaunchId, why)) logEvent(l.name, 'claim-released', `${claimedTicket} ${why}`);
+      } catch (e) {
+        logEvent(l.name, 'claim-release-failed', `${claimedTicket} ${String(e).split('\n')[0]!.slice(0, 160)}`);
+      }
+    };
+    const draw = claimedTicket
+      ? (resumedClaim
+        ? `Rev has resumed ticket ${claimedTicket} for this launch: worker ${seatId(l)} of seat '${seatName(l)}' left it in progress last time, and it stays with this worker until it is finished. Your workspace is ${l.cwd}, as before. Read ${claimedTicket} with its history first and continue from its last recorded next step rather than starting over. `
+        : `Rev has already claimed ticket ${claimedTicket} for this launch, as seat '${seatName(l)}' from worker ${seatId(l)}. `) +
+        `It is the only ticket you work this session: other workers on this seat hold their own claims, so do not claim, start or change any other ticket. You may file tickets you discover, linked to ${claimedTicket}. Work ${claimedTicket} to a natural stopping point; if it is unfinished when you stop, leave it in progress with its next step recorded, and this worker's next launch resumes it, `
+      : l.workstream === '*'
         ? `Use your Helmo tools: first list tickets assigned to you, then survey fresh activity and unclaimed filings across all workstreams — your constitution says what your work is. If nothing has materially changed since your last pass, end the session WITHOUT filing a ticket or writing a note: producing nothing is the idle signal this loop reads, and a no-change sweep record is itself fresh motion that wakes you again (H-545). Otherwise work to a natural stopping point, `
         : `Use your Helm tools: first list tickets assigned to you, then ready work in workstream '${l.workstream}'. A ticket reserved for you is yours to work whatever its workstream. If nothing in EITHER list is workable — both are empty, or every ticket is blocked, time-gated, or already sitting with the human — end the session WITHOUT filing a ticket or writing a note: producing nothing is the idle signal this loop reads, and recording the no-change finding re-certifies you as busy and buys another full-price pass, evidence attached or not (H-545, H-740). The one exception is a question only the human can answer that is not already pending — return that once, then stop. Otherwise work ONE ticket to a natural stopping point, `;
     const split =
@@ -503,8 +659,11 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     // call, not a question for the operator (Arthur, H-1046) — and the bar the
     // draw sets for returning to the human is exactly where a loop decides to
     // ask. One clause, at the point of the decision (doctrine agent-context §9).
+    // $REV_CLI is the only form named: it is this supervisor's own CLI and
+    // home. A `rev` on PATH can be another installation's alias carrying its
+    // own REV_HOME, so offering it first redeployed the wrong fleet (H-646).
     const deploy =
-      `A change you land that needs the Rev fleet restarted to take effect is yours to deploy, never a question for the human: run 'rev redeploy --ticket <id> --reason "<why>"' (node $REV_CLI redeploy ... if rev is not on your PATH) and it lands after your iteration ends. `;
+      `A change you land that needs the Rev fleet restarted to take effect is yours to deploy, never a question for the human: run 'node $REV_CLI redeploy --ticket <id> --reason "<why>"' and it lands after your iteration ends. Never a bare 'rev': on a shared machine it may be another installation's fleet. `;
     const prompt =
       `This is a Rev loop iteration, not a summon; AGENTS.md's summon clause does not apply; the queue is the work. ` +
       `Loop iteration ${i} for agent '${l.name}'. Working directory: ${l.cwd}. ` +
@@ -512,7 +671,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       steering +
       draw +
       split +
-      disposition +
+      (claimedTicket ? '' : disposition) +
       `record progress honestly, then end the session. ` +
       deploy;
     let readyBefore: string[] | null = null;
@@ -523,14 +682,18 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     const usageBefore = (run.billing ?? 'metered') === 'subscription'
       ? usageForModel(providerUsage()[run.runtime], model)
       : null;
-    if (journaledLaunchId && admission.admissionId) {
+    // Helmo checks authority by the launch the admission was granted to,
+    // which a resumed pool claim does not share with its journal entry.
+    const authorityLaunchId = admission.launchId ?? journaledLaunchId;
+    if (journaledLaunchId && authorityLaunchId && admission.admissionId) {
       try {
-        launchRevalidate(g, admission.admissionId, journaledLaunchId);
+        launchRevalidate(g, admission.admissionId, authorityLaunchId);
       } catch (e) {
         try {
-          launchQuarantine(g, admission.admissionId, journaledLaunchId, `Authority failed revalidation before dispatch: ${String(e).split('\n')[0]!.slice(0, 120)}`);
+          launchQuarantine(g, admission.admissionId, authorityLaunchId, `Authority failed revalidation before dispatch: ${String(e).split('\n')[0]!.slice(0, 120)}`);
           settleLaunch(l.name, journaledLaunchId, 'quarantined');
         } catch { /* retain the unsettled journal for restart recovery */ }
+        putDown('its workflow authority failed revalidation before dispatch');
         logEvent(l.name, 'launch-denied', `${journaledLaunchId} failed pre-dispatch revalidation`);
         sSet(l.name, 'IDLE', `${before.max_seq}\nworkflow launch ${journaledLaunchId} failed revalidation\n`);
         sSet(l.name, 'IDLE_AT', String(Date.now()));
@@ -541,6 +704,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     }
     if (journaledLaunchId && !recordLaunchDispatch(l.name, journaledLaunchId)) {
       logEvent(l.name, 'launch-replay', `${journaledLaunchId} already reached dispatch`);
+      putDown('its launch had already reached dispatch');
       console.error(`rev: suppressed replay of launch '${journaledLaunchId}' before model dispatch.`);
       sSet(l.name, 'IDLE', `${before.max_seq}\nworkflow launch ${journaledLaunchId} already reached dispatch\n`);
       sSet(l.name, 'IDLE_AT', String(Date.now()));
@@ -548,25 +712,46 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       await sleep(g.poll_seconds);
       continue;
     }
-    const res = runSession(g, l, prompt, model, run);
+    const res = runSession(g, l, prompt, model, run, claimedTicket ? journaledLaunchId ?? undefined : undefined, journaledLaunchId ? launchGroupFile(l.name, journaledLaunchId) : undefined);
     let launchTrusted = true;
 
-    if (journaledLaunchId && admission.admissionId) {
+    // A session that ended short of ok on a pool claim is not quarantined
+    // (H-687): the claim is kept, and the worker's next launch resumes it
+    // from its record under a fenced generation. Quarantine would refuse
+    // that resume. Authority that fails revalidation is quarantined either
+    // way, and Helmo then returns the held ticket to the human.
+    if (journaledLaunchId && authorityLaunchId && admission.admissionId) {
       try {
-        launchRevalidate(g, admission.admissionId, journaledLaunchId);
+        launchRevalidate(g, admission.admissionId, authorityLaunchId);
         if (res.cls === 'ok') settleLaunch(l.name, journaledLaunchId, 'complete');
+        else if (claimedTicket) settleLaunch(l.name, journaledLaunchId, 'quarantined');
         else {
-          launchQuarantine(g, admission.admissionId, journaledLaunchId, `Model session ended ${res.cls} before a trusted advance boundary.`);
+          launchQuarantine(g, admission.admissionId, authorityLaunchId, `Model session ended ${res.cls} before a trusted advance boundary.`);
           settleLaunch(l.name, journaledLaunchId, 'quarantined');
           logEvent(l.name, 'launch-quarantined', `${journaledLaunchId} session ${res.cls}`);
         }
       } catch (e) {
         launchTrusted = false;
         try {
-          launchQuarantine(g, admission.admissionId, journaledLaunchId, `Authority failed revalidation after model output: ${String(e).split('\n')[0]!.slice(0, 120)}`);
+          launchQuarantine(g, admission.admissionId, authorityLaunchId, `Authority failed revalidation after model output: ${String(e).split('\n')[0]!.slice(0, 120)}`);
           settleLaunch(l.name, journaledLaunchId, 'quarantined');
-        } catch { /* recovery retries this exact affected launch */ }
+        } catch { /* recovery retries this exact launch; a kept claim is rechecked at resume */ }
         logEvent(l.name, 'launch-quarantined', `${journaledLaunchId} post-session revalidation failed`);
+      }
+    }
+    // A claim the session left in progress stays with this worker: its next
+    // launch resumes it. Only a session that never started (apparatus) puts
+    // the claim back, because nothing was done that this worker must carry.
+    if (claimedTicket && journaledLaunchId) {
+      if (res.cls === 'apparatus') putDown(`its session never started`);
+      else {
+        try {
+          if (ticketStatus(g, claimedTicket) === 'in_progress') logEvent(l.name, 'claim-kept', `${claimedTicket} session ended ${res.cls}; the next launch resumes it`);
+        } catch { /* a failed read changes nothing: the claim stays where Helmo has it */ }
+      }
+      if (!admission.admissionId) {
+        try { settleLaunch(l.name, journaledLaunchId, res.cls === 'ok' ? 'complete' : 'quarantined'); }
+        catch (e) { logEvent(l.name, 'launch-settle-failed', `${journaledLaunchId} ${String(e).split('\n')[0]!.slice(0, 160)}`); }
       }
     }
 

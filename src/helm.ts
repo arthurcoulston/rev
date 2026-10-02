@@ -26,7 +26,7 @@ export function readyTicketIds(g: GlobalConfig, l: LoopConfig): string[] {
   const list = (args: string[]) => (run(g, ['list', '--ready', ...args, '--limit', '100'], loopActor(l)) as { tickets: { id: string }[] }).tickets;
   return [...new Set([
     ...list(['--workstream', l.workstream]),
-    ...list(['--assignee', l.name]),
+    ...list(['--assignee', seatName(l)]),
   ].map((t) => t.id))];
 }
 
@@ -60,13 +60,22 @@ export function seatId(l: LoopConfig): string {
   return `rev:${l.name}`;
 }
 
+/** Accountable role identity. The fallback keeps programmatic LoopConfig
+ * callers compatible with the pre-worker-pool shape. */
+export function seatName(l: LoopConfig): string {
+  return l.seat ?? l.name;
+}
+
 // The actor's model field is the model actually running the session — a probe
 // iteration on the small tier must not sign the record as the working model.
 // A session override is for a consumer that is NOT the loop: a meeting room
 // runs the seat's composed session but must not sign as `rev:<seat>`, or the
 // seat guard above reads a meeting's write as the loop's own hold (H-1152).
-export function loopActor(l: LoopConfig, model?: string, session?: string): object {
-  return { name: l.name, kind: 'agent', model: model ?? l.model, version: l.version, session: session ?? seatId(l) };
+// A pool worker's launch also names its generation, which is the launch id
+// (H-574): Helmo binds the claim to that one attempt, so every write the
+// session makes must carry it, and a retired generation writes nothing.
+export function loopActor(l: LoopConfig, model?: string, session?: string, generation?: string): object {
+  return { name: seatName(l), kind: 'agent', model: model ?? l.model, version: l.version, session: session ?? seatId(l), ...(generation ? { generation } : {}) };
 }
 
 export interface SeatHold {
@@ -76,7 +85,7 @@ export interface SeatHold {
 }
 
 export function seatHolds(g: GlobalConfig, l: LoopConfig): SeatHold[] {
-  return (run(g, ['seat-check', '--assignee', l.name]) as { holds: SeatHold[] }).holds;
+  return (run(g, ['seat-check', '--assignee', seatName(l)]) as { holds: SeatHold[] }).holds;
 }
 
 export function revActor(): object {
@@ -130,6 +139,8 @@ export interface LaunchAdmission {
   ticketId: string | null;
   workflowAttemptId?: string;
   admissionId?: string;
+  /** The launch the admission was granted to: Helmo checks authority by this
+   *  pair. A resumed pool claim keeps its first launch's (H-687). */
   launchId?: string;
 }
 
@@ -190,7 +201,7 @@ export function launchAdmit(
     );
     // The echoed launch_id is deliberately not compared with the one sent: the
     // answer is Helmo's record of a decision, not a token Rev validates.
-    const res = run(g, ['launch-admit', '--workstream', l.workstream, '--assignee', l.name, '--launch-id', admittedLaunchId], revActor(), true) as
+    const res = run(g, ['launch-admit', '--workstream', l.workstream, '--assignee', seatName(l), '--launch-id', admittedLaunchId], revActor(), true) as
       { admitted?: boolean; ticket_id?: string; workflow_attempt_id?: string | null; admission_id?: string | null };
     const ticketId = res.ticket_id ?? null;
     const exactCandidate = candidate
@@ -244,6 +255,120 @@ export function launchQuarantine(g: GlobalConfig, admissionId: string, launchId:
   run(g, ['launch-quarantine', '--admission-id', admissionId, '--launch-id', launchId, '--reason', reason], revActor(), true);
 }
 
+/** A loop is a pool worker when another roster loop shares its seat. Such a
+ *  worker never lets its model session choose work: two sessions reading the
+ *  same ready queue would both start the first ticket. It launches only on a
+ *  ticket Helmo has already claimed for it. */
+export function poolWorker(l: LoopConfig): boolean {
+  return (l.peer_sessions?.length ?? 0) > 1;
+}
+
+/** Helmo's answer to one pool worker's launch-claim (H-574). Selection,
+ *  workflow admission and the exclusive claim commit in one transaction, so a
+ *  sibling worker asking at the same instant gets the next ticket or none.
+ *  Unlike launch-admit, every failure here holds the launch: without the
+ *  claim a pool worker has no safe way to pick work, so an older store that
+ *  lacks the command must stop the pool rather than let it race. */
+export interface LaunchClaim {
+  act: 'launch' | 'idle' | 'deny';
+  how: 'claimed' | 'nothing_ready' | 'denied' | 'unsupported' | 'unavailable' | 'stale' | 'mismatch';
+  reason: string;
+  ticketId: string | null;
+  workflowAttemptId?: string;
+  admissionId?: string;
+  /** The worker already held this ticket from an earlier launch, and Helmo
+   *  handed it forward to this one, retiring the earlier generation. */
+  resumed?: boolean;
+  /** For a resumed workflow claim, the earlier launch its admission belongs
+   *  to, which Helmo names so this launch can revalidate it (H-687). */
+  admissionLaunchId?: string;
+}
+
+export function launchClaimArgs(l: LoopConfig, id: string): string[] {
+  return ['launch-claim', '--workstream', l.workstream, '--assignee', seatName(l), '--launch-id', id,
+    ...(l.project ? ['--project', l.project] : []), ...(l.tickets ? ['--tickets', l.tickets.join(',')] : []),
+    ...(l.exclude_tickets ? ['--exclude-tickets', l.exclude_tickets.join(',')] : [])];
+}
+
+export function launchClaim(g: GlobalConfig, l: LoopConfig, id: string): LaunchClaim {
+  // Written as the worker itself, never as the harness: Helmo records the
+  // claim against this session, which is what the seat guard and the replay
+  // fence both read.
+  try {
+    const res = run(g, launchClaimArgs(l, id), loopActor(l, undefined, undefined, id), true) as {
+      admitted?: boolean; claimed?: boolean; resumed?: boolean; ticket_id?: string; workflow_attempt_id?: string | null; admission_id?: string | null;
+      launch_id?: string; admission_launch_id?: string | null; scope?: { session?: string; assignee?: string; workstream?: string; project?: string | null; tickets?: string[]; exclude_tickets?: string[] };
+    };
+    if (res.admitted === false && res.claimed === undefined) return { act: 'idle', how: 'nothing_ready', reason: 'nothing ready to claim', ticketId: null };
+    // The receipt must name THIS worker's exact scope: a replayed id answered
+    // with someone else's claim would put this session on their ticket.
+    const exact = res.claimed === true && typeof res.ticket_id === 'string' && res.launch_id === id
+      && res.scope?.session === seatId(l) && res.scope.assignee === seatName(l)
+      && res.scope.workstream === l.workstream && (res.scope.project ?? undefined) === l.project
+      // A store that ignored the allowlist would hand back any project ticket.
+      && JSON.stringify(res.scope.tickets) === JSON.stringify(l.tickets && [...l.tickets].sort())
+      && (!l.tickets || l.tickets.includes(res.ticket_id))
+      && JSON.stringify(res.scope.exclude_tickets) === JSON.stringify(l.exclude_tickets && [...l.exclude_tickets].sort())
+      && !l.exclude_tickets?.includes(res.ticket_id)
+      && Boolean(res.workflow_attempt_id) === Boolean(res.admission_id);
+    if (!exact) {
+      // An answer, not a lost reply (H-671): asking again under the same id
+      // replays the same receipt forever. A claim granted to THIS launch is
+      // put down so the ticket is not stranded; anyone else's is not ours to
+      // move, and Helmo's fence would refuse it anyway.
+      const ours = res.claimed === true && typeof res.ticket_id === 'string' && res.launch_id === id && res.scope?.session === seatId(l);
+      let released = false;
+      if (ours) { try { released = releaseClaim(g, l, res.ticket_id!, id, `Helmo's receipt did not match this worker's scope`); } catch { /* left for the operator; the launch is still denied */ } }
+      return { act: 'deny', how: 'mismatch', reason: `Helmo's claim receipt for ${id} did not match this worker${ours ? (released ? `; released ${res.ticket_id}` : `; ${res.ticket_id} could not be released`) : ''}`, ticketId: res.ticket_id ?? null };
+    }
+    return {
+      act: 'launch', how: 'claimed', ticketId: res.ticket_id!,
+      workflowAttemptId: res.workflow_attempt_id ?? undefined,
+      admissionId: res.admission_id ?? undefined,
+      resumed: res.resumed === true,
+      // A store from before H-687 does not name it; the loop then trusts the
+      // revalidation Helmo did at resume, as it did before.
+      admissionLaunchId: res.resumed === true && typeof res.admission_launch_id === 'string' ? res.admission_launch_id : undefined,
+      reason: `${res.resumed === true ? 'resumed' : 'claimed'} ${res.ticket_id}${res.admission_id ? ` admitted as ${res.admission_id}` : ''}`,
+    };
+  } catch (e) {
+    const raw = String((e as { stderr?: string | Buffer }).stderr ?? '').trim();
+    if (raw.includes('workflow_admission_denied')) {
+      let body: Record<string, unknown> = {};
+      try { body = JSON.parse(raw) as Record<string, unknown>; } catch { /* the message is the detail */ }
+      const ticketId = typeof body['ticket_id'] === 'string' ? body['ticket_id'] : null;
+      return { act: 'deny', how: 'denied', reason: deniedReason(body, ticketId), ticketId };
+    }
+    const detail = cliError(e).split('\n')[0]!.slice(0, 160);
+    // Helmo answered, and the answer is that this id can never claim again:
+    // its claim has since ended or moved on, or its generation was retired.
+    // Distinct from unavailable, where no answer arrived and asking again
+    // under the same id is how the uncertainty is reconciled (H-686).
+    if (/launch_claim_stale|stale_generation|was replayed with different scope/.test(raw)) {
+      return { act: 'deny', how: 'stale', reason: `launch ${id} can no longer claim: ${detail}`, ticketId: null };
+    }
+    return raw.startsWith('usage:') || /unknown (command|flag)/i.test(raw)
+      ? { act: 'deny', how: 'unsupported', reason: `this store has no launch-claim command, so pool worker '${l.name}' cannot run: ${detail}`, ticketId: null }
+      : { act: 'deny', how: 'unavailable', reason: `launch claim could not be asked: ${detail}`, ticketId: null };
+  }
+}
+
+/** Put down a claim this worker's launch took but never got to work — the
+ *  session did not start, or the launch was refused before dispatch — so the
+ *  ticket returns to the seat's ready queue for the next worker. Work a
+ *  session started is never put down here: it stays with this worker and its
+ *  next launch resumes it. Written as the launch's own generation, which is
+ *  the only identity Helmo lets move the claim, and which leaving in_progress
+ *  retires. Only a ticket still in progress under this seat is touched.
+ *  Releasing keeps the reservation (Helmo H-954), so the ticket stays the
+ *  seat's. Returns whether it released. */
+export function releaseClaim(g: GlobalConfig, l: LoopConfig, ticketId: string, generation: string, why: string): boolean {
+  const t = run(g, ['get', ticketId]) as { status?: string; assignee?: string | null };
+  if (t.status !== 'in_progress' || t.assignee !== seatName(l)) return false;
+  run(g, ['update', '--ticket', ticketId, '--status', 'open', '--note', `Rev released ${seatId(l)}'s launch claim: ${why}`], loopActor(l, undefined, undefined, generation), true);
+  return true;
+}
+
 /** A ticket's current status. A read, so no actor is needed. */
 export function ticketStatus(g: GlobalConfig, ticketId: string): string {
   return (run(g, ['get', ticketId]) as { status: string }).status;
@@ -260,7 +385,7 @@ export function wakeCheck(g: GlobalConfig, l: LoopConfig, sinceSeq: number): Wak
   // narrows the whole store back down to tickets already assigned, and fresh
   // filings — the wake signal these loops exist for — never land (H-138).
   const scope =
-    l.workstream === '*' ? [] : ['--workstream', l.workstream, '--assignee', l.name];
+    l.workstream === '*' ? [] : ['--workstream', l.workstream, '--assignee', seatName(l)];
   return run(g, ['wake-check', ...scope, '--since-seq', String(sinceSeq)]) as WakeCheck;
 }
 
@@ -291,7 +416,7 @@ export function seatStreams(g: GlobalConfig, l: LoopConfig): string[] {
   try {
     const rows = ['in_progress', 'open'].flatMap(
       (status) =>
-        (run(g, ['list', '--assignee', l.name, '--status', status, '--limit', '100']) as {
+        (run(g, ['list', '--assignee', seatName(l), '--status', status, '--limit', '100']) as {
           tickets: { workstream: string }[];
         }).tickets,
     );
@@ -302,11 +427,11 @@ export function seatStreams(g: GlobalConfig, l: LoopConfig): string[] {
 }
 
 export function actorActivity(g: GlobalConfig, l: LoopConfig, sinceSeq: number): number {
-  return (run(g, ['actor-activity', '--name', l.name, '--session', seatId(l), '--since-seq', String(sinceSeq), '--advancing']) as { events: number }).events;
+  return (run(g, ['actor-activity', '--name', seatName(l), '--session', seatId(l), '--since-seq', String(sinceSeq), '--advancing']) as { events: number }).events;
 }
 
 export function actorTickets(g: GlobalConfig, l: LoopConfig, sinceSeq: number): { id: string; events: number }[] {
-  return (run(g, ['actor-tickets', '--name', l.name, '--session', seatId(l), '--since-seq', String(sinceSeq)]) as { tickets: { id: string; events: number }[] }).tickets;
+  return (run(g, ['actor-tickets', '--name', seatName(l), '--session', seatId(l), '--since-seq', String(sinceSeq)]) as { tickets: { id: string; events: number }[] }).tickets;
 }
 
 export interface SelfSpend {
@@ -317,7 +442,7 @@ export interface SelfSpend {
 }
 
 export function actorSelfSpend(g: GlobalConfig, l: LoopConfig, sinceSeq: number): SelfSpend {
-  const r = run(g, ['actor-spend', '--name', l.name, '--session', seatId(l), '--since-seq', String(sinceSeq)]) as SelfSpend;
+  const r = run(g, ['actor-spend', '--name', seatName(l), '--session', seatId(l), '--since-seq', String(sinceSeq)]) as SelfSpend;
   return { ...r, by_ticket: r.by_ticket ?? [] };
 }
 
@@ -345,9 +470,23 @@ export function openEscalation(g: GlobalConfig, l: LoopConfig): string | null {
   return null;
 }
 
-export function investigatorFor(_g: GlobalConfig, stopped: LoopConfig): LoopConfig | null {
+/** Whether this loop would ever start a ticket reserved to its seat in this
+ *  scope (H-676). A one-worker seat draws its seat's work in any stream; a pool
+ *  worker launches only on Helmo's claim, which is scoped to its exact
+ *  workstream and project lane, and to its exact ticket allowlist where it has
+ *  one (H-671), so work outside them would sit reserved to a live role that
+ *  never picks it up. A ticket not yet filed is in no allowlist. */
+export function drawsScope(l: LoopConfig, workstream: string, project: string | null = null, ticketId: string | null = null): boolean {
+  if (!poolWorker(l)) return true;
+  return l.workstream === workstream && (l.project === undefined || l.project === project)
+    && (l.tickets === undefined || (ticketId !== null && l.tickets.includes(ticketId)))
+    && !(ticketId !== null && l.exclude_tickets?.includes(ticketId));
+}
+
+export function investigatorFor(g: GlobalConfig, stopped: LoopConfig): LoopConfig | null {
   for (const loop of Object.values(loadRoster().loops)) {
     if (loop.name === stopped.name || processObservation(loop.name).state !== 'alive') continue;
+    if (!drawsScope(loop, g.escalation_workstream)) continue;
     if ((['BLOCKED', 'STOP', 'HOLD', 'PARKED'] as const).some((s) => sHas(loop.name, s))) continue;
     return loop;
   }
@@ -468,7 +607,9 @@ export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, 
       '--workstream', g.escalation_workstream,
       '--type', 'ops',
       '--priority', investigator ? '0' : '1',
-      ...(investigator ? ['--assignee', investigator.name] : []),
+      // The seat, not the loop: workers draw by seat, and a pool worker's own
+      // name is no assignee anything wakes on (H-676).
+      ...(investigator ? ['--assignee', seatName(investigator)] : []),
     ],
     revActor(),
   ) as { id: string };

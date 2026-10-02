@@ -93,12 +93,12 @@ export type SeatAction = { act: 'work' } | { act: 'stand_down'; reason: string }
 
 export function seatDecide(opts: {
   holds: { ticketId: string; claimSession: string | null; ageSeconds: number | null }[];
-  seat: string;
+  sessions: string[];
   staleSeconds: number;
 }): SeatAction {
   if (opts.staleSeconds <= 0) return { act: 'work' };
   for (const h of opts.holds) {
-    if (h.claimSession === opts.seat) continue; // the seat's own mid-flight work
+    if (h.claimSession && opts.sessions.includes(h.claimSession)) continue; // a supervised worker in this seat
     if (h.ageSeconds === null || h.ageSeconds > opts.staleSeconds) continue; // abandoned or unattributable
     return {
       act: 'stand_down',

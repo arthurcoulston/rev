@@ -97,6 +97,95 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   sentinel makes the same-seat guard visible while the loop stands down for
   another live session; the view, health feed, and CLI show the hold instead
   of calling it a running iteration, and the marker clears with the hold.
+  Multiple roster loops may explicitly share an accountable `seat`: each
+  keeps its own state directory and `rev:<loop>` session identity, while
+  Helmo sees the role name for assignment, authorship and self-review. The
+  guard exempts only the peer sessions derived from the loaded roster; an
+  unlisted desk session or subagent still holds every worker in the seat.
+  Their `cwd` paths must be separate writable workspaces; the roster refuses
+  two workers of one seat whose `cwd` is the same real directory (a symlink
+  alias included), nested one inside the other, or inside one git worktree
+  and so one index (H-671, `writableDestination` in config.ts), and refuses a
+  `'*'` pool.
+  **Pool workers launch on a claim, not a choice** (H-574). A loop sharing its
+  seat skips `launch-admit` and, just before `run-start` (after every capacity
+  exit, before the probe decision), calls helm-cli `launch-claim --workstream W
+  --assignee <seat> --launch-id <id> [--project P] [--tickets H-1,H-2]` written by the worker
+  itself — seat name, `rev:<loop>` session, `generation` = the launch id — so
+  Helmo selects, workflow-admits and claims in one transaction, bound to that
+  one attempt. The session's `HELMO_ACTOR` (MCP env, and the mock's env)
+  carries the same generation; Helmo refuses execution writes on the ticket
+  from any other session or generation (`execution_claim_held`) and any write
+  from a retired one (`stale_generation`). The prompt names the one ticket and
+  forbids touching any other. The journal records `claim: true` at intent and
+  the ticket on the receipt. **Unfinished work stays with its worker**: a
+  session that ends with the ticket in progress logs `claim-kept`, and the
+  same worker's next `launch-claim` returns it with `resumed: true` — retiring
+  the old generation — and the prompt says it was resumed, names the
+  workspace, and points at the ticket's last recorded step. A restart after a
+  crash settles the dead launch's journal and keeps the claim the same way, so
+  a child that outlived its loop can write nothing after the resume. That
+  fences the record, not the workspace (H-685): every journaled session's shell
+  writes its process group id to `<entry>.group` before it execs the CLI, and
+  while that group is still running the restarted worker logs
+  `launch-session-running` and launches nothing — polling like the seat guard,
+  no IDLE marker, no iteration spent — then settles and resumes once it has
+  gone (`launch-session-ended`). It never kills the session: its generation is
+  still current, so what it finishes is valid. A group it cannot signal counts
+  as running; a group id whose leader started well after the dispatch is a
+  later process that inherited the id. **A claim whose reply was lost** (H-686)
+  — the CLI failed, or the process died after asking — may have committed, so
+  its `intent` entry is never settled blind, at restart or in process: the
+  next claim asks again under THAT launch id and logs `claim-reconciled`.
+  Helmo answers the receipt it granted while the claim stands, claims afresh
+  if the first ask never landed, or refuses `launch_claim_stale` /
+  `stale_generation` once it has moved on (`how: 'stale'`), which alone
+  settles the entry `quarantined` and lets the launch take a fresh id. A
+  receipt that does not match the worker's scope (`how: 'mismatch'`, H-671)
+  is an answer too, never re-asked: a claim it granted to this launch is put
+  back and the launch denied. Until
+  Helmo answers the worker polls with no IDLE marker and no iteration spent:
+  its own claim is not motion that would wake it. Only a
+  claim never worked goes back to `open` (seat reservation kept), released as
+  the launch's own generation: a session that never started (`apparatus`), a
+  failed pre-dispatch revalidation, a suppressed replay, or a journal write
+  that failed. **A workflow-bound claim** (H-687) is never released: its
+  attempt has spent its one launch admission, so an open ticket would be
+  refused to every worker that drew it; those paths log `claim-kept` instead.
+  Nor is a kept claim's admission quarantined — not at restart, not when its
+  session ends short of `ok` — because Helmo's resume revalidates it, and a
+  quarantine would refuse the very resume that keeps the work with this
+  worker. A resumed workflow claim carries the admission its first launch
+  consumed; Rev journals it claim-only and revalidates and quarantines by the
+  `admission_launch_id` Helmo names (a store that names none revalidated at
+  resume, and Rev relies on that). Authority that fails revalidation is still
+  quarantined, and Helmo's next resume then returns the ticket open with
+  `needs_human` and hands the worker its next ticket. A
+  store without `launch-claim` denies every pool launch — without the atomic
+  claim two workers race the same ticket. Nothing ready means `launch-idle`
+  and no session. `project` is the worker's lane and `tickets` its exact
+  allowlist (H-671) — what keeps two workers in ONE project off each other's
+  work; Rev refuses a receipt naming a different allowlist or a ticket outside
+  it, and the roster refuses one ticket in two allowlists. A worker of that
+  seat with no allowlist is given the union as `exclude_tickets` (derived at
+  load, never a roster key) and claims with `--exclude-tickets`, so the
+  role's general worker never takes a lane's ticket. Both keys are refused on
+  a loop with no pool.
+  **A role is addressed as a role** (H-676). The first worker usually keeps
+  the role's name, so `stop`/`resume`/`pace`/`team` resolve through
+  `controlTargets` (config.ts): a seat with more than one loop, or a seat no
+  loop is named after, reaches every worker of it, and `--worker` narrows it
+  to the one loop of exactly that name. Sentinels stay per loop; a role-level
+  halt is written to each worker. Anything that routes work to a role must ask
+  which worker can draw it: `drawsScope` (helm.ts) says a one-worker seat
+  draws its seat's work in any stream, a pool worker only in its exact
+  workstream and lane, and with an allowlist only the tickets it names — so
+  never a newly filed escalation. The anomaly investigator is chosen with it and
+  assigned by seat, never by loop name — a pool worker's own name is no
+  assignee anything wakes on. `status --json` prints each loop's `seat`,
+  `pool`, `workstream`, `project` and `tickets` beside its state, for consumers outside
+  Rev (gp-crew's handoff guard) that must answer "can this role take this
+  ticket"; the human table is unchanged because estate tools parse its header.
   **Workflow launch admission** is the last gate before a session is spent
   (H-2561, helmo H-471): `launchAdmit` asks helm-cli `launch-admit --workstream
   W --assignee A --launch-id <identity>`, and Helmo picks the
@@ -132,7 +221,7 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   the same affected-work-only rule and is asked again next pass.
   Workflow admissions are durably revalidated immediately before dispatch and
   again after the model returns. A restart quarantines any admitted or
-  dispatching journal entry it recovers: that boundary is ambiguous, so only
+  dispatching journal entry it recovers, except a pool claim's (above): that boundary is ambiguous, so only
   the affected attempt is withheld while ordinary work and sibling branches
   continue. Failed quarantine remains unsettled for the next restart rather
   than being mistaken for safe output.
@@ -291,7 +380,8 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   only the loop process. The cost is deliberate and worth naming: a SIGKILLed
   loop now leaves its session running to completion as an orphan — one
   session's tokens, spent finishing and closing its own work, which is the
-  trade this bug was about. After a CLI returns normally, the shim terminates
+  trade this bug was about. A journaled launch's replacement waits for that
+  orphan rather than running beside it (H-685, under the pool section). After a CLI returns normally, the shim terminates
   background children still in that session group (H-1013); this cleanup is
   deliberately unreachable when the loop dies during `spawnSync`, so H-467's
   orphaned session still finishes. `test/shim.test.ts` proves both sides with
@@ -1024,6 +1114,14 @@ follow a module imported dynamically much later.
   caller is still working; and when it finally does, it exits 0 — the one exit
   launchd and systemd deliberately leave down. The fleet stops with nothing to
   bring it back. `rev redeploy` exists so that neither happens.
+- **A loop session reaches the harness only through `$REV_CLI`** (H-646).
+  `sessionEnvOverrides` sets it to this supervisor's own CLI, and the session
+  inherits this supervisor's `REV_HOME`. A `rev` on PATH may be a different
+  installation's alias that carries its own `REV_HOME`. A caller's prefix
+  cannot override that, and both fleets answer `status`, so nothing looks
+  wrong. The iteration prompt therefore names only `node $REV_CLI redeploy`.
+  Offering bare `rev` first, with `$REV_CLI` as the fallback, sent agents on
+  a two-installation machine to the other fleet.
 - **A redeploy that never comes back must not be silent** (H-1046). The fleet
   is the thing that would have noticed, so the exiting supervisor arms a
   detached `redeploy-watch` first: past `redeploy_deadline_seconds` it alarms

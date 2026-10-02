@@ -1,4 +1,5 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { stateDir } from './config.js';
@@ -19,6 +20,10 @@ export interface LaunchJournalEntry {
   intent_at: string;
   ticket_id?: string;
   workflow_attempt_id?: string;
+  /** A pool worker's launch, which holds a Helmo claim from before dispatch
+   *  (H-574). Set at intent, because the claim may land even when this
+   *  process dies before learning which ticket it got. */
+  claim?: true;
   admission_id?: string;
   definition_revision?: string;
   requirement_refs?: { requirement_id: string; manifest_id: string; decision_id: string }[];
@@ -64,27 +69,34 @@ export function readLaunch(loop: string, launchId: string): LaunchJournalEntry |
   return entry;
 }
 
+/** Launches a restart must resolve: anything admitted or dispatched, plus a
+ *  claim whose intent was recorded but whose answer never was. */
 export function unsettledLaunches(loop: string): LaunchJournalEntry[] {
   return readdirSync(journalDir(loop)).filter((name) => name.endsWith('.json')).map((name) => {
     const entry = JSON.parse(readFileSync(join(journalDir(loop), name), 'utf8')) as LaunchJournalEntry;
     if (entry.format !== 1 || !entry.launch_id) throw new Error(`Launch journal entry ${name} is corrupt.`);
     return entry;
-  }).filter((entry) => entry.phase === 'admitted' || entry.phase === 'dispatching');
+  }).filter((entry) => entry.phase === 'admitted' || entry.phase === 'dispatching' || (entry.phase === 'intent' && entry.claim === true));
 }
 
 export function recordLaunchIntent(
-  loop: string, launchId: string, identity?: { ticketId: string; workflowAttemptId: string }, at = new Date().toISOString(),
+  loop: string, launchId: string, identity?: { ticketId: string; workflowAttemptId: string } | { claim: true }, at = new Date().toISOString(),
 ): LaunchJournalEntry {
   const existing = readLaunch(loop, launchId);
+  if (existing && identity && 'claim' in identity) {
+    if (existing.claim !== true) throw new Error(`Launch journal identity ${launchId} was replayed as a claim.`);
+    return existing;
+  }
   if (existing) {
-    if (identity && (existing.ticket_id !== identity.ticketId || existing.workflow_attempt_id !== identity.workflowAttemptId)) {
+    if (identity && !('claim' in identity) && (existing.ticket_id !== identity.ticketId || existing.workflow_attempt_id !== identity.workflowAttemptId)) {
       throw new Error(`Launch journal identity ${launchId} was replayed for a different ticket or workflow attempt.`);
     }
     return existing;
   }
   const entry: LaunchJournalEntry = {
     format: 1, phase: 'intent', launch_id: launchId, intent_at: at,
-    ...(identity ? { ticket_id: identity.ticketId, workflow_attempt_id: identity.workflowAttemptId } : {}),
+    ...(identity && 'claim' in identity ? { claim: true as const } : {}),
+    ...(identity && !('claim' in identity) ? { ticket_id: identity.ticketId, workflow_attempt_id: identity.workflowAttemptId } : {}),
   };
   writeDurable(entryPath(loop, launchId), entry);
   return entry;
@@ -119,6 +131,21 @@ export function recordLaunchAdmission(loop: string, receipt: LaunchReceipt, at =
   return entry;
 }
 
+/** Record which ticket a pool worker's launch-claim took. A workflow-bound
+ *  claim goes through recordLaunchAdmission instead, which keeps the claim
+ *  marker set at intent. */
+export function recordLaunchClaim(loop: string, launchId: string, ticketId: string, at = new Date().toISOString()): LaunchJournalEntry {
+  const prior = readLaunch(loop, launchId);
+  if (!prior?.claim) throw new Error(`Launch ${launchId} has no durable claim intent.`);
+  if (prior.phase !== 'intent') {
+    if (prior.ticket_id !== ticketId) throw new Error(`Launch journal identity ${launchId} was replayed for a different ticket.`);
+    return prior;
+  }
+  const entry: LaunchJournalEntry = { ...prior, ticket_id: ticketId, phase: 'admitted', admitted_at: at };
+  writeDurable(entryPath(loop, launchId), entry);
+  return entry;
+}
+
 /** Durably claim the one allowed dispatch. The marker is written before the
  * model process starts, so a crash in the gap may lose a launch but can never
  * turn a replay of the same immutable identity into a second model process. */
@@ -140,9 +167,60 @@ export function recordLaunchDispatch(loop: string, launchId: string, at = new Da
   return true;
 }
 
+/** Where a dispatched launch's session writes its process group id (H-685). */
+export function launchGroupFile(loop: string, launchId: string): string {
+  return `${entryPath(loop, launchId)}.group`;
+}
+
+const SESSION_START_WINDOW_MS = 10_000;
+
+/** Seconds since a process started, from ps's `[[dd-]hh:]mm:ss`; null when
+ *  there is no such process or ps cannot say. */
+function processAgeSeconds(pid: number): number | null {
+  let etime: string;
+  try { etime = execFileSync('ps', ['-o', 'etime=', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
+  catch { return null; }
+  const m = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/.exec(etime);
+  if (!m) return null;
+  return ((Number(m[1] ?? 0) * 24 + Number(m[2] ?? 0)) * 60 + Number(m[3])) * 60 + Number(m[4]);
+}
+
+/** Whether a dispatched launch's model session may still be running (H-685).
+ *  The session runs in its own process group so it outlives a SIGKILLed loop;
+ *  a replacement launched beside it would share its workspace. Helmo fences
+ *  the old generation's writes to the record, not to files.
+ *
+ *  Not running: the launch never reached dispatch, its session never wrote a
+ *  group id (it died before exec), or no process is left in that group. A
+ *  group id the kernel has since given to a newer process group is told apart
+ *  by its leader starting well after this launch dispatched. Anything else counts
+ *  as running, including a group this user cannot signal: ownership that
+ *  cannot be read is not confirmed dead. macOS also answers EPERM for a group
+ *  whose last member has exited but not yet been reaped, so that reads as
+ *  running for the moment until launchd, which inherits it, reaps it. */
+export function launchSessionRunning(loop: string, entry: LaunchJournalEntry, nowMs = Date.now()): { running: boolean; group: number | null; why: string } {
+  if (entry.phase !== 'dispatching') return { running: false, group: null, why: 'never dispatched' };
+  const file = launchGroupFile(loop, entry.launch_id);
+  const group = existsSync(file) ? Number(readFileSync(file, 'utf8').trim()) : NaN;
+  if (!Number.isInteger(group) || group <= 1) return { running: false, group: null, why: 'its session never started' };
+  try { process.kill(-group, 0); }
+  catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ESRCH') return { running: false, group, why: `session group ${group} has ended` };
+    return { running: true, group, why: `session group ${group} cannot be checked (${(e as NodeJS.ErrnoException).code ?? 'error'})` };
+  }
+  const age = processAgeSeconds(group);
+  const dispatchedMs = Date.parse(entry.dispatching_at ?? entry.intent_at);
+  // The session's shell starts within moments of the dispatch marker. A leader
+  // that started well after it is a later process that was given the id once
+  // this group had ended; ps reports whole seconds, hence the slack.
+  const startedMs = age === null ? null : nowMs - age * 1000;
+  if (startedMs !== null && startedMs > dispatchedMs + SESSION_START_WINDOW_MS) return { running: false, group, why: `group id ${group} now belongs to a later process` };
+  return { running: true, group, why: `session group ${group} is still running` };
+}
+
 export function settleLaunch(loop: string, launchId: string, phase: 'complete' | 'quarantined', at = new Date().toISOString()): void {
   const prior = readLaunch(loop, launchId);
-  if (!prior?.admission_id) throw new Error(`Launch ${launchId} has no durable admission.`);
+  if (!prior?.admission_id && !prior?.claim) throw new Error(`Launch ${launchId} has no durable admission.`);
   writeDurable(entryPath(loop, launchId), {
     ...prior, phase,
     ...(phase === 'complete' ? { completed_at: at } : { quarantined_at: at }),

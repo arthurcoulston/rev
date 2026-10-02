@@ -1,6 +1,6 @@
-import { readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, isAbsolute } from 'node:path';
+import { join, isAbsolute, dirname, basename, resolve, sep } from 'node:path';
 import { parse } from 'smol-toml';
 import { BillingMode, GlobalConfig, LoopConfig, ModelPrice, ProviderConfig, RunChoice, Runtime } from './types.js';
 
@@ -156,6 +156,7 @@ export function resolveRef(
 
 /** The complete set of keys a [loops.<name>] table may carry. */
 const LOOP_KEYS = new Set([
+  'seat', 'project', 'tickets',
   'workstream', 'cwd', 'constitution', 'version', 'pace', 'idle_floor_s',
   'runtime', 'model', 'provider', 'tier', 'probe_tier', 'probe_model', 'rotation', 'fallback', 'routing',
   'mcp_extra', 'skills', 'mock_cmd', 'burn_usd_per_hour', 'burn_usd_per_day', 'continue_cap',
@@ -213,6 +214,10 @@ export function loadRoster(): Roster {
     }
     loops[name] = {
       name,
+      seat: String(l['seat'] ?? name),
+      peer_sessions: [],
+      project: l['project'] === undefined ? undefined : String(l['project']),
+      tickets: l['tickets'] === undefined ? undefined : parseTickets(name, l['tickets']),
       workstream: String(l['workstream']),
       cwd: expand(String(l['cwd'])),
       runtime: selection.primary.runtime,
@@ -233,7 +238,91 @@ export function loadRoster(): Roster {
       continue_cap: l['continue_cap'] === undefined ? undefined : Number(l['continue_cap']),
     };
   }
+  for (const loop of Object.values(loops)) {
+    loop.peer_sessions = Object.values(loops)
+      .filter((peer) => peer.seat === loop.seat)
+      .map((peer) => `rev:${peer.name}`);
+  }
+  // A pool worker launches only on Helmo's atomic claim, which is scoped to
+  // one exact workstream, and edits only its own checkout: two workers in one
+  // writable cwd would overwrite each other however cleanly their tickets
+  // were split. Refused at load, so a misconfigured pool never starts. The
+  // comparison is of what the paths ARE, not how they are spelled (H-671): a
+  // symlink alias, one checkout nested in another, or two directories inside
+  // one git worktree (one index) are the same writable destination.
+  for (const loop of Object.values(loops)) {
+    if (loop.peer_sessions.length < 2) {
+      if (loop.project !== undefined) throw new Error(`Loop '${loop.name}': 'project' scopes a pool worker's claims; it needs another loop sharing seat '${loop.seat}'.`);
+      if (loop.tickets !== undefined) throw new Error(`Loop '${loop.name}': 'tickets' scopes a pool worker's claims; it needs another loop sharing seat '${loop.seat}'.`);
+      continue;
+    }
+    if (loop.workstream === '*') throw new Error(`Loop '${loop.name}': a pool worker for seat '${loop.seat}' needs one exact workstream, not '*'.`);
+  }
+  const pool = Object.values(loops).filter((l) => l.peer_sessions.length > 1);
+  const dest = new Map(pool.map((l) => [l.name, writableDestination(l.cwd)]));
+  for (const [i, loop] of pool.entries()) {
+    for (const peer of pool.slice(i + 1)) {
+      if (peer.seat !== loop.seat) continue;
+      const a = dest.get(loop.name)!, b = dest.get(peer.name)!;
+      const why = a.real === b.real ? `cwd ${loop.cwd}${loop.cwd === peer.cwd ? '' : ` (${peer.cwd} is the same directory, ${a.real})`}`
+        : within(a.real, b.real) || within(b.real, a.real) ? `nested checkouts ${a.real} and ${b.real}`
+        : a.gitDir && a.gitDir === b.gitDir ? `one git worktree and index (${a.gitDir}) at ${a.real} and ${b.real}`
+        : null;
+      if (why) throw new Error(`Loops '${loop.name}' and '${peer.name}' share seat '${loop.seat}' and ${why}; each worker needs its own writable checkout.`);
+      const overlap = loop.tickets?.filter((t) => peer.tickets?.includes(t)) ?? [];
+      if (overlap.length) throw new Error(`Loops '${loop.name}' and '${peer.name}' both list ${overlap.join(', ')}; a ticket belongs to one worker's allowlist.`);
+    }
+  }
+  // A worker with no allowlist would otherwise take a lane's ticket the moment
+  // it became ready, so it is told which tickets its siblings own.
+  for (const loop of pool) {
+    if (loop.tickets) continue;
+    const owned = pool.filter((p) => p.seat === loop.seat && p.tickets).flatMap((p) => p.tickets!);
+    if (owned.length) loop.exclude_tickets = owned;
+  }
   return { global, loops, providers };
+}
+
+function parseTickets(loop: string, raw: unknown): string[] {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.some((t) => typeof t !== 'string' || !/^\S+$/.test(t)) || new Set(raw).size !== raw.length) {
+    throw new Error(`Loop '${loop}': 'tickets' must be a non-empty array of distinct exact ticket ids.`);
+  }
+  return raw as string[];
+}
+
+function within(child: string, parent: string): boolean {
+  return child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+}
+
+/** Where a cwd actually writes: its real path (resolving symlinks through the
+ *  deepest part that exists yet, so a checkout not created yet still compares)
+ *  and the git directory owning it, whose index two workers must not share. */
+export function writableDestination(cwd: string): { real: string; gitDir: string | null } {
+  let head = resolve(cwd), tail = '';
+  while (!existsSync(head) && dirname(head) !== head) { tail = tail ? join(basename(head), tail) : basename(head); head = dirname(head); }
+  const real = tail ? join(realpathSync(head), tail) : realpathSync(head);
+  for (let dir = realpathSync(head); ; dir = dirname(dir)) {
+    const dotGit = join(dir, '.git');
+    if (existsSync(dotGit)) {
+      if (statSync(dotGit).isDirectory()) return { real, gitDir: realpathSync(dotGit) };
+      const m = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, 'utf8'));
+      const gitDir = m ? resolve(dir, m[1]!.trim()) : dotGit;
+      return { real, gitDir: existsSync(gitDir) ? realpathSync(gitDir) : gitDir };
+    }
+    if (dirname(dir) === dir) return { real, gitDir: null };
+  }
+}
+
+/** The loops a control command's name reaches (H-676). With pool workers a
+ *  role is no longer one loop, and its first worker usually keeps the role's
+ *  name, so `stop builder` reading only loop `builder` would leave every other
+ *  builder running. A seat name therefore addresses the whole role whenever
+ *  more than one loop sits in it, or no loop carries that name; `worker`
+ *  narrows it back to the one loop of exactly that name. Empty means unknown. */
+export function controlTargets(loops: Record<string, LoopConfig>, name: string, worker = false): string[] {
+  const role = Object.values(loops).filter((l) => l.seat === name).map((l) => l.name);
+  if (!worker && role.length > 0 && (role.length > 1 || !loops[name])) return role;
+  return loops[name] ? [name] : [];
 }
 
 /** A loop names where it runs either the v0 way (runtime + model strings) or
