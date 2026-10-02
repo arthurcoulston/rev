@@ -44,8 +44,11 @@ function helm(e: Env, args: string[], actor = '{"name":"seeder","kind":"agent","
   ) as Record<string, unknown>;
 }
 
+// node --import tsx, not npx tsx: the same loader without npx's ~0.4s of
+// package resolution on every run, which the multi-run tests pay four times
+// over (H-675). The SIGKILL test keeps its own spawn below.
 function rev(e: Env, args: string[]): string {
-  return execFileSync('npx', ['tsx', REV_CLI, ...args], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+  return execFileSync('node', ['--import', 'tsx', REV_CLI, ...args], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
 }
 
 function seedTicket(e: Env, title: string): string {
@@ -194,7 +197,13 @@ process.exit(result.status ?? 1);
 // on a quiet machine, and vitest runs test FILES in parallel — adding one
 // more e2e file elsewhere in the suite is enough to push them over (found
 // while landing H-1089). Budget for the suite's own load, not the quiet case.
-describe('rev e2e (mock runtime, real helm store)', { timeout: 30000 }, () => {
+// Each `rev run` is ~16 serial helmo-cli processes, so wall time scales with
+// host load, not with anything the test waits on (H-675). The three-decline
+// quarantine test, 69 spawns, measured 11.3s at load 8, 15.6-24.3s at load
+// 10-19 and 26.8s solo at load 24 — the same on the pre-H-574 base — and hit
+// 30.5s in a full suite on a busy host, where H-187 also reached 29.1s.
+// 60s is twice the worst measured; a hang still fails here.
+describe('rev e2e (mock runtime, real helm store)', { timeout: 60000 }, () => {
   it.each([
     ['missing', { error: 'workflow_admission_denied', ticket_id: 'H-1', missing: ['requirement:technical'], stale: [], failed: [] }],
     ['stale', { error: 'workflow_admission_denied', ticket_id: 'H-1', missing: [], stale: ['manifest:input'], failed: [] }],
