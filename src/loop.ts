@@ -659,8 +659,11 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     // call, not a question for the operator (Arthur, H-1046) — and the bar the
     // draw sets for returning to the human is exactly where a loop decides to
     // ask. One clause, at the point of the decision (doctrine agent-context §9).
+    // $REV_CLI is the only form named: it is this supervisor's own CLI and
+    // home. A `rev` on PATH can be another installation's alias carrying its
+    // own REV_HOME, so offering it first redeployed the wrong fleet (H-646).
     const deploy =
-      `A change you land that needs the Rev fleet restarted to take effect is yours to deploy, never a question for the human: run 'rev redeploy --ticket <id> --reason "<why>"' (node $REV_CLI redeploy ... if rev is not on your PATH) and it lands after your iteration ends. `;
+      `A change you land that needs the Rev fleet restarted to take effect is yours to deploy, never a question for the human: run 'node $REV_CLI redeploy --ticket <id> --reason "<why>"' and it lands after your iteration ends. Never a bare 'rev': on a shared machine it may be another installation's fleet. `;
     const prompt =
       `This is a Rev loop iteration, not a summon; AGENTS.md's summon clause does not apply; the queue is the work. ` +
       `Loop iteration ${i} for agent '${l.name}'. Working directory: ${l.cwd}. ` +

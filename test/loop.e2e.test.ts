@@ -1229,6 +1229,23 @@ mock_cmd = '${CAPTURE_PROMPT}'
     expect(prompt).not.toContain('$-12.00 remains');
   });
 
+  it('names only the supervisor\'s own CLI for a redeploy, never a bare rev (H-646)', () => {
+    const e = setup(`[loops.deploy-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '${CAPTURE_PROMPT}; printf %s "$REV_CLI" > "$REV_HOME/rev-cli.txt"'
+`);
+    seedTicket(e, 'Work that may need a redeploy');
+    rev(e, ['run', 'deploy-loop', '--count', '1']);
+    const prompt = promptOf(e);
+    expect(prompt).toContain(`run 'node $REV_CLI redeploy --ticket <id> --reason "<why>"'`);
+    expect(prompt).not.toMatch(/run 'rev redeploy/);
+    // The variable the prompt names is the CLI this supervisor runs, so the
+    // instruction reaches this installation whatever `rev` means on PATH.
+    expect(readFileSync(join(e.home, 'rev-cli.txt'), 'utf8')).toBe(REV_CLI);
+  });
+
   it('steering names every stream the seat holds work in, not just the one it watches (H-954)', () => {
     // The defect this closes: steering was built from the SEAT's workstream and
     // never the assigned ticket's, so a seat holding work routed in from another

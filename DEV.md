@@ -1111,6 +1111,14 @@ follow a module imported dynamically much later.
   caller is still working; and when it finally does, it exits 0 — the one exit
   launchd and systemd deliberately leave down. The fleet stops with nothing to
   bring it back. `rev redeploy` exists so that neither happens.
+- **A loop session reaches the harness only through `$REV_CLI`** (H-646).
+  `sessionEnvOverrides` sets it to this supervisor's own CLI, and the session
+  inherits this supervisor's `REV_HOME`. A `rev` on PATH may be a different
+  installation's alias that carries its own `REV_HOME`. A caller's prefix
+  cannot override that, and both fleets answer `status`, so nothing looks
+  wrong. The iteration prompt therefore names only `node $REV_CLI redeploy`.
+  Offering bare `rev` first, with `$REV_CLI` as the fallback, sent agents on
+  a two-installation machine to the other fleet.
 - **A redeploy that never comes back must not be silent** (H-1046). The fleet
   is the thing that would have noticed, so the exiting supervisor arms a
   detached `redeploy-watch` first: past `redeploy_deadline_seconds` it alarms
