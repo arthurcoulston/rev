@@ -474,6 +474,18 @@ process.exit(r.status ?? 1);
     expect(ticket(e, decoy).status).toBe('open');
   });
 
+  it('the role\'s worker with no allowlist leaves a lane\'s ticket to its owner (H-671)', () => {
+    const e = setup((h) => worker('w1', h, `${BOUND}; ${FINISH}`) + worker('w2', h, 'true', 'tickets = ["H-1"]\n'));
+    const lane = seed(e, 'Owned by the w2 lane', 'R-31', 0);
+    const general = seed(e, 'Anyone may take this', 'R-31', 2);
+    expect(lane).toBe('H-1');
+
+    execFileSync('npx', ['tsx', REV_CLI, 'run', 'w1', '--count', '1'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+
+    expect(readFileSync(join(e.home, 'bound'), 'utf8').trim()).toBe(`w1 ${general}`);
+    expect(ticket(e, lane).status).toBe('open');
+  });
+
   it('a worker whose allowlist holds nothing ready idles, leaving the project\'s other work alone (H-671)', () => {
     const e = setup((h) => worker('w1', h, `${BOUND}; ${FINISH}`, 'project = "R-31"\ntickets = ["H-99"]\n') + worker('w2', h, 'true'));
     const other = seed(e, 'Another lane\'s ticket', 'R-31');

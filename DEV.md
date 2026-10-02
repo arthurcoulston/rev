@@ -166,7 +166,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   and no session. `project` is the worker's lane and `tickets` its exact
   allowlist (H-671) — what keeps two workers in ONE project off each other's
   work; Rev refuses a receipt naming a different allowlist or a ticket outside
-  it, and the roster refuses one ticket in two allowlists. Both are refused on
+  it, and the roster refuses one ticket in two allowlists. A worker of that
+  seat with no allowlist is given the union as `exclude_tickets` (derived at
+  load, never a roster key) and claims with `--exclude-tickets`, so the
+  role's general worker never takes a lane's ticket. Both keys are refused on
   a loop with no pool.
   **A role is addressed as a role** (H-676). The first worker usually keeps
   the role's name, so `stop`/`resume`/`pace`/`team` resolve through

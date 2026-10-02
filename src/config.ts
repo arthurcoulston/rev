@@ -273,6 +273,13 @@ export function loadRoster(): Roster {
       if (overlap.length) throw new Error(`Loops '${loop.name}' and '${peer.name}' both list ${overlap.join(', ')}; a ticket belongs to one worker's allowlist.`);
     }
   }
+  // A worker with no allowlist would otherwise take a lane's ticket the moment
+  // it became ready, so it is told which tickets its siblings own.
+  for (const loop of pool) {
+    if (loop.tickets) continue;
+    const owned = pool.filter((p) => p.seat === loop.seat && p.tickets).flatMap((p) => p.tickets!);
+    if (owned.length) loop.exclude_tickets = owned;
+  }
   return { global, loops, providers };
 }
 

@@ -82,6 +82,7 @@ export interface LoopConfig {
   peer_sessions: string[];    // supervised workers allowed to share that seat
   project?: string;           // pool workers only: claim just this project's tickets
   tickets?: string[];         // pool workers only: claim just these exact tickets (H-671)
+  exclude_tickets?: string[]; // derived, never a roster key: the tickets same-seat siblings' allowlists own
   workstream: string;
   cwd: string;
   runtime: Runtime;        // primary adapter (derived from 'provider' when that is set)

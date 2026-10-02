@@ -95,8 +95,13 @@ describe('parallel workers', () => {
   });
 
   it('loads exact ticket allowlists and refuses one ticket in two (H-671)', () => {
-    roster([['builder', 'tickets = ["H-655", "H-684"]\n'], ['builder-2', 'seat = "builder"\ntickets = ["H-654"]\n']]);
-    expect(loadRoster().loops['builder']!.tickets).toEqual(['H-655', 'H-684']);
+    roster([['builder', 'tickets = ["H-655", "H-684"]\n'], ['builder-2', 'seat = "builder"\ntickets = ["H-654"]\n'], ['builder-3', 'seat = "builder"\n'], ['reviewer']]);
+    const lanes = loadRoster().loops;
+    expect(lanes['builder']!.tickets).toEqual(['H-655', 'H-684']);
+    // The worker with no lane leaves every lane's tickets to its owner.
+    expect(lanes['builder-3']!.exclude_tickets).toEqual(['H-655', 'H-684', 'H-654']);
+    expect(lanes['builder']!.exclude_tickets).toBeUndefined();
+    expect(lanes['reviewer']!.exclude_tickets).toBeUndefined();
     roster([['builder', 'tickets = ["H-655", "H-684"]\n'], ['builder-2', 'seat = "builder"\ntickets = ["H-684"]\n']]);
     expect(() => loadRoster()).toThrow(/both list H-684/);
     for (const bad of ['[]', '["H-1", "H-1"]', '["H 1"]', '"H-1"']) {
