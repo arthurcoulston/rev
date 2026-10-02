@@ -43,7 +43,9 @@ Register a loop only for a folder and a workstream you would hand an unattended 
 One accountable role may have multiple workers by giving additional loop
 entries distinct names and writable `cwd` paths and setting `seat` to the
 role name. Worker state, launch identity and spend remain per loop; Helmo
-authorship and ticket ownership remain on the seat.
+authorship and ticket ownership remain on the seat. Such pool workers need a
+Helmo with `launch-claim`: each launch is handed one atomically claimed ticket
+(optionally only from its `project` lane) instead of choosing from the queue.
 
 ## The shape of it
 

@@ -94,9 +94,11 @@ pace = 1.0                            # velocity fraction; 0.5 = half speed
 # self-review rules on the role. Rev permits only roster-declared peer sessions
 # through the same-seat guard; a desk session or subagent still makes every
 # worker in the seat stand down. Helmo's atomic claim keeps two workers from
-# taking the same ticket.
+# taking the same ticket; each session is handed its ticket. `project` limits
+# a pool worker to one project's tickets.
 # [loops.example-worker-2]
 # seat = "example-worker"
+# project = "R-29"
 # workstream = "my-workstream"
 # cwd = "~/projects/my-project-worker-2" # never share a writable checkout
 # provider = "claude"

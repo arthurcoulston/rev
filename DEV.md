@@ -102,7 +102,25 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   Helmo sees the role name for assignment, authorship and self-review. The
   guard exempts only the peer sessions derived from the loaded roster; an
   unlisted desk session or subagent still holds every worker in the seat.
-  Their `cwd` paths must be separate writable workspaces.
+  Their `cwd` paths must be separate writable workspaces; the roster refuses
+  two workers of one seat in the same `cwd`, and refuses a `'*'` pool.
+  **Pool workers launch on a claim, not a choice** (H-574). A loop sharing its
+  seat skips `launch-admit` and, just before `run-start` (after every capacity
+  exit, before the probe decision), calls helm-cli `launch-claim --workstream W
+  --assignee <seat> --launch-id <id> [--project P]` written by the worker
+  itself — seat name, `rev:<loop>` session — so Helmo selects, workflow-admits
+  and claims in one transaction. The prompt then names the one ticket and
+  forbids touching any other. The journal records `claim: true` at intent and
+  the ticket on the receipt; whatever the session leaves in progress, and
+  anything a failed revalidation or suppressed replay leaves, goes back to
+  `open` with the seat reservation kept. On restart an unanswered claim
+  intent is replayed under its own id (Helmo returns the original receipt)
+  and what it names is released. A store without `launch-claim` denies every
+  pool launch — without the atomic claim two workers race the same ticket.
+  Nothing ready means `launch-idle` and no session. `project` is the worker's
+  lane; it is refused on a loop with no pool. Known gap: Helmo fences a claim
+  by actor NAME, so a misbehaving session could still update a sibling's
+  ticket; the prompt binding is the only guard against that today.
   **Workflow launch admission** is the last gate before a session is spent
   (H-2561, helmo H-471): `launchAdmit` asks helm-cli `launch-admit --workstream
   W --assignee A --launch-id <identity>`, and Helmo picks the
