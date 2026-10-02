@@ -130,7 +130,16 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   gone (`launch-session-ended`). It never kills the session: its generation is
   still current, so what it finishes is valid. A group it cannot signal counts
   as running; a group id whose leader started well after the dispatch is a
-  later process that inherited the id. Only a
+  later process that inherited the id. **A claim whose reply was lost** (H-686)
+  — the CLI failed, or the process died after asking — may have committed, so
+  its `intent` entry is never settled blind, at restart or in process: the
+  next claim asks again under THAT launch id and logs `claim-reconciled`.
+  Helmo answers the receipt it granted while the claim stands, claims afresh
+  if the first ask never landed, or refuses `launch_claim_stale` /
+  `stale_generation` once it has moved on (`how: 'stale'`), which alone
+  settles the entry `quarantined` and lets the launch take a fresh id. Until
+  Helmo answers the worker polls with no IDLE marker and no iteration spent:
+  its own claim is not motion that would wake it. Only a
   claim never worked goes back to `open` (seat reservation kept), released as
   the launch's own generation: a session that never started (`apparatus`), a
   failed pre-dispatch revalidation, a suppressed replay, or a journal write

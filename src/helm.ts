@@ -269,7 +269,7 @@ export function poolWorker(l: LoopConfig): boolean {
  *  lacks the command must stop the pool rather than let it race. */
 export interface LaunchClaim {
   act: 'launch' | 'idle' | 'deny';
-  how: 'claimed' | 'nothing_ready' | 'denied' | 'unsupported' | 'unavailable';
+  how: 'claimed' | 'nothing_ready' | 'denied' | 'unsupported' | 'unavailable' | 'stale';
   reason: string;
   ticketId: string | null;
   workflowAttemptId?: string;
@@ -316,6 +316,13 @@ export function launchClaim(g: GlobalConfig, l: LoopConfig, id: string): LaunchC
       return { act: 'deny', how: 'denied', reason: deniedReason(body, ticketId), ticketId };
     }
     const detail = cliError(e).split('\n')[0]!.slice(0, 160);
+    // Helmo answered, and the answer is that this id can never claim again:
+    // its claim has since ended or moved on, or its generation was retired.
+    // Distinct from unavailable, where no answer arrived and asking again
+    // under the same id is how the uncertainty is reconciled (H-686).
+    if (/launch_claim_stale|stale_generation|was replayed with different scope/.test(raw)) {
+      return { act: 'deny', how: 'stale', reason: `launch ${id} can no longer claim: ${detail}`, ticketId: null };
+    }
     return raw.startsWith('usage:') || /unknown (command|flag)/i.test(raw)
       ? { act: 'deny', how: 'unsupported', reason: `this store has no launch-claim command, so pool worker '${l.name}' cannot run: ${detail}`, ticketId: null }
       : { act: 'deny', how: 'unavailable', reason: `launch claim could not be asked: ${detail}`, ticketId: null };

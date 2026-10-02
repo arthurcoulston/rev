@@ -15,7 +15,7 @@ import { logEvent, occupiedPid, paceAutoRelease, pidAlive, runningStamp, sClear,
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig, RunChoice } from './types.js';
-import { launchGroupFile, launchSessionRunning, recordLaunchAdmission, recordLaunchClaim, recordLaunchDispatch, recordLaunchIntent, settleLaunch, unsettledLaunches } from './launch-journal.js';
+import { launchGroupFile, launchSessionRunning, readLaunch, recordLaunchAdmission, recordLaunchClaim, recordLaunchDispatch, recordLaunchIntent, settleLaunch, unsettledLaunches } from './launch-journal.js';
 
 const sleep = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
 
@@ -120,10 +120,13 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   // group is still running holds its entry unsettled, and this worker
   // launches nothing until it has gone. It is never killed here; its
   // generation is still current, so what it finishes is valid work.
+  // A claim asked but never answered is not settled here either (H-686): the
+  // claim block asks Helmo again under that same launch id before any other.
   const runningSessions = new Set<string>();
   const recoverLaunches = (only?: Set<string>): void => {
     for (const recovered of unsettledLaunches(l.name)) {
       if (!recovered.admission_id && !recovered.claim) continue;
+      if (recovered.claim && recovered.phase === 'intent') continue;
       if (only && !only.has(recovered.launch_id)) continue;
       const session = launchSessionRunning(l.name, recovered);
       if (session.running) {
@@ -154,6 +157,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   let firstPoll = true; // restart pickup: see the wake gate below (H-426)
   let seatHeld = false; // same-seat guard episode flag: log once per hold, not per poll (H-558)
   let sessionHeld = false; // dead launch's session still running: same, per hold (H-685)
+  let claimUnanswered = false; // a claim awaiting Helmo's answer: same, per wait (H-686)
   const lineage = ancestryStamp();
 
   // Bounded runs and the iteration ceiling. A helper because an iteration can
@@ -494,31 +498,66 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     let resumedClaim = false;
     if (poolWorker(l)) {
       let claim: LaunchClaim | null = null;
+      // A claim whose reply was lost (H-686) — a timeout, a dropped pipe, a
+      // process that died before reading it — may have committed. It is
+      // reconciled by its own identity: Helmo answers the same id with the
+      // receipt it granted while that claim still stands, claims afresh under
+      // it if the first ask never landed, and refuses it as stale once the
+      // claim has ended or moved on, which alone lets this launch take a new
+      // id. Until Helmo answers, every iteration asks under the old id.
+      let claimLaunchId = thisLaunchId;
       try {
-        recordLaunchIntent(l.name, thisLaunchId, { claim: true });
-        claim = launchClaim(g, l, thisLaunchId);
+        const unanswered = unsettledLaunches(l.name)
+          .filter((j) => j.claim && j.phase === 'intent')
+          .sort((a, b) => a.intent_at.localeCompare(b.intent_at))[0];
+        if (unanswered) claimLaunchId = unanswered.launch_id;
+        recordLaunchIntent(l.name, claimLaunchId, { claim: true });
+        claim = launchClaim(g, l, claimLaunchId);
+        if (unanswered) logEvent(l.name, 'claim-reconciled', `${claimLaunchId} ${claim.how === 'stale' ? claim.reason : `answered ${claim.reason}`}`);
+        if (claim.how === 'stale' && unanswered) {
+          settleLaunch(l.name, claimLaunchId, 'quarantined');
+          claimLaunchId = thisLaunchId;
+          recordLaunchIntent(l.name, claimLaunchId, { claim: true });
+          claim = launchClaim(g, l, claimLaunchId);
+        }
         if (claim.how === 'claimed') {
           // A resumed workflow claim carries the admission its FIRST launch
           // consumed, which Helmo revalidated at resume; its receipt belongs
           // to that earlier launch id, so this launch journals the claim only.
           const admissionId = claim.resumed ? undefined : claim.admissionId;
-          if (admissionId) recordLaunchAdmission(l.name, launchReceipt(g, admissionId, thisLaunchId));
-          else recordLaunchClaim(l.name, thisLaunchId, claim.ticketId!);
-          journaledLaunchId = thisLaunchId;
+          if (admissionId) recordLaunchAdmission(l.name, launchReceipt(g, admissionId, claimLaunchId));
+          else recordLaunchClaim(l.name, claimLaunchId, claim.ticketId!);
+          journaledLaunchId = claimLaunchId;
           claimedTicket = claim.ticketId;
           resumedClaim = claim.resumed === true;
-          admission = { ...admission, act: 'launch', how: 'admitted', reason: claim.reason, ticketId: claim.ticketId, admissionId, workflowAttemptId: claim.workflowAttemptId, launchId: thisLaunchId };
+          admission = { ...admission, act: 'launch', how: 'admitted', reason: claim.reason, ticketId: claim.ticketId, admissionId, workflowAttemptId: claim.workflowAttemptId, launchId: claimLaunchId };
           logEvent(l.name, 'launch-claimed', claim.reason);
         } else if (claim.how !== 'unavailable') {
           // Nothing was claimed, so there is nothing for a restart to resolve.
-          settleLaunch(l.name, thisLaunchId, 'complete');
+          settleLaunch(l.name, claimLaunchId, 'complete');
         }
       } catch (e) {
         if (claim?.how === 'claimed' && claim.ticketId) {
-          try { releaseClaim(g, l, claim.ticketId, thisLaunchId, `its launch could not be journaled`); } catch { /* the intent stays journaled for restart recovery */ }
+          try { releaseClaim(g, l, claim.ticketId, claimLaunchId, `its launch could not be journaled`); } catch { /* the intent stays journaled for restart recovery */ }
         }
         claim = { act: 'deny', how: 'unavailable', ticketId: null, reason: `launch claim could not be persisted: ${String(e).split('\n')[0]!.slice(0, 160)}` };
       }
+      // A claim still unanswered waits on Helmo, not on the queue: the claim
+      // may hold a ticket no sibling can take, and this worker's own write is
+      // not motion that would wake it. So it neither idles at a cursor nor
+      // spends an iteration; it asks again under the same id next poll.
+      let unanswered = false;
+      if (!claimedTicket && claim.how === 'unavailable') {
+        try { unanswered = readLaunch(l.name, claimLaunchId)?.phase === 'intent'; } catch { /* unreadable: idle as before */ }
+      }
+      if (unanswered) {
+        if (!claimUnanswered) logEvent(l.name, 'launch-denied', `${claim.reason}; asking again as ${claimLaunchId}`);
+        claimUnanswered = true;
+        i -= 1;
+        await sleep(g.poll_seconds);
+        continue;
+      }
+      claimUnanswered = false;
       if (!claimedTicket) {
         logEvent(l.name, claim.act === 'idle' ? 'launch-idle' : 'launch-denied', claim.reason);
         if (claim.act !== 'idle') console.log(`rev: pool worker '${l.name}' was not admitted to launch — ${claim.reason}`);

@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { HELMO_CLI as HELM_CLI, HELMO_SERVER, HELMO_STORE } from './helmo.js';
 import { loadRoster } from '../src/config.js';
 import { launchClaim } from '../src/helm.js';
+import { recordLaunchIntent } from '../src/launch-journal.js';
 
 const { Store } = await import(HELMO_STORE);
 
@@ -249,9 +250,94 @@ describe('pool workers on one seat (H-574)', { timeout: 60000 }, () => {
     expect(launchClaim(roster.global, l, 'rev:w1:1:1:1')).toMatchObject({ act: 'launch', how: 'claimed', ticketId: id });
     expect(launchClaim(roster.global, l, 'rev:w1:1:2:2')).toMatchObject({ act: 'launch', how: 'claimed', ticketId: id, resumed: true });
     const stale = launchClaim(roster.global, l, 'rev:w1:1:1:1');
-    expect(stale).toMatchObject({ act: 'deny', how: 'unavailable', ticketId: null });
+    expect(stale).toMatchObject({ act: 'deny', how: 'stale', ticketId: null });
     expect(stale.reason).toMatch(/launch_claim_stale/);
     expect(ticket(e, id).status).toBe('in_progress');
+  });
+
+  it('a claim whose reply was lost is reconciled by asking again under the same launch id', () => {
+    // The store commits the claim; the reply never reaches Rev (H-686).
+    const home = mkdtempSync(join(tmpdir(), 'rev-pool-lost-'));
+    const proxy = join(home, 'lossy-helmo.mjs');
+    writeFileSync(proxy, `import { existsSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const args = process.argv.slice(2);
+const r = spawnSync(process.execPath, [${JSON.stringify(HELM_CLI)}, ...args], { stdio: ['inherit', 'pipe', 'inherit'], env: process.env });
+const lost = process.env.REV_HOME + '/reply-lost';
+if (args[0] === 'launch-claim' && !existsSync(lost)) {
+  writeFileSync(lost, args[args.indexOf('--launch-id') + 1]);
+  process.stderr.write('ETIMEDOUT: reply lost after commit\\n');
+  process.exit(1);
+}
+process.stdout.write(r.stdout);
+process.exit(r.status ?? 1);
+`);
+    const e = setup((h) => worker('w1', h, `${BOUND}; ${FINISH}`) + worker('w2', h, 'true'), proxy);
+    const id = seed(e, 'Claim whose reply was lost');
+
+    // One iteration: waiting on the unanswered claim spends none, and its own
+    // write is not motion, so an idle worker would never ask again.
+    execFileSync('npx', ['tsx', REV_CLI, 'run', 'w1', '--count', '1'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+
+    const lostId = readFileSync(join(e.home, 'reply-lost'), 'utf8');
+    const log = events(e, 'w1');
+    expect(log).toMatch(new RegExp(`launch-denied\\s+launch claim could not be asked: ETIMEDOUT.*; asking again as ${lostId}`));
+    expect(log).toMatch(new RegExp(`claim-reconciled\\s+${lostId} answered claimed ${id}`));
+    expect(log).toMatch(new RegExp(`launch-claimed\\s+claimed ${id}`));
+    expect(log).not.toMatch(/resumed/);
+    expect(ticket(e, id).status).toBe('done');
+    expect(readFileSync(join(e.home, 'bound'), 'utf8').trim().split('\n')).toEqual([`w1 ${id}`]);
+    // One launch identity end to end: the lost one, settled by its session.
+    expect(journal(e, 'w1')).toEqual([expect.objectContaining({ launch_id: lostId, ticket_id: id, phase: 'complete', claim: true })]);
+  });
+
+  function roster(e: Env): ReturnType<typeof loadRoster> {
+    const before = process.env['REV_HOME'];
+    process.env['REV_HOME'] = e.home;
+    try { return loadRoster(); } finally { if (before === undefined) delete process.env['REV_HOME']; else process.env['REV_HOME'] = before; }
+  }
+  function intent(e: Env, loop: string, launchId: string): void {
+    const before = process.env['REV_HOME'];
+    process.env['REV_HOME'] = e.home;
+    try { recordLaunchIntent(loop, launchId, { claim: true }); } finally { if (before === undefined) delete process.env['REV_HOME']; else process.env['REV_HOME'] = before; }
+  }
+
+  it('a restart replays a claim its dead process asked but never heard, rather than settling it and resuming under a new id', () => {
+    const e = setup((h) => worker('w1', h, `${BOUND}; ${FINISH}`) + worker('w2', h, 'true'));
+    const id = seed(e, 'Claim asked before a crash');
+    const r = roster(e);
+    const dead = 'rev:w1:999:1:1';
+    intent(e, 'w1', dead);
+    expect(launchClaim(r.global, r.loops['w1']!, dead)).toMatchObject({ how: 'claimed', ticketId: id });
+
+    execFileSync('npx', ['tsx', REV_CLI, 'run', 'w1', '--count', '1'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+
+    const log = events(e, 'w1');
+    expect(log).toMatch(new RegExp(`claim-reconciled\\s+${dead} answered claimed ${id}`));
+    expect(log).not.toMatch(/claim-kept|launch-quarantined|resumed/);
+    expect(ticket(e, id).status).toBe('done');
+    expect(journal(e, 'w1')).toEqual([expect.objectContaining({ launch_id: dead, ticket_id: id, phase: 'complete' })]);
+  });
+
+  it('an unanswered claim that has since moved on is settled as stale and the launch takes a fresh id', () => {
+    const e = setup((h) => worker('w1', h, `${BOUND}; ${FINISH}`) + worker('w2', h, 'true'));
+    const id = seed(e, 'Claim resumed before its reply was reconciled');
+    const r = roster(e);
+    const lost = 'rev:w1:999:1:1';
+    intent(e, 'w1', lost);
+    expect(launchClaim(r.global, r.loops['w1']!, lost)).toMatchObject({ how: 'claimed', ticketId: id });
+    // A later generation of this worker took the claim forward, retiring the lost one.
+    expect(launchClaim(r.global, r.loops['w1']!, 'rev:w1:999:2:2')).toMatchObject({ how: 'claimed', ticketId: id, resumed: true });
+
+    execFileSync('npx', ['tsx', REV_CLI, 'run', 'w1', '--count', '1'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+
+    const log = events(e, 'w1');
+    expect(log).toMatch(new RegExp(`claim-reconciled\\s+${lost} launch ${lost} can no longer claim: launch_claim_stale`));
+    expect(log).toMatch(new RegExp(`launch-claimed\\s+resumed ${id}`));
+    expect(ticket(e, id).status).toBe('done');
+    const entries = journal(e, 'w1');
+    expect(entries.find((j) => j['launch_id'] === lost)).toMatchObject({ phase: 'quarantined' });
+    expect(entries.filter((j) => j['launch_id'] !== lost)).toEqual([expect.objectContaining({ ticket_id: id, phase: 'complete' })]);
   });
 
   it('claims only inside its project lane', () => {
