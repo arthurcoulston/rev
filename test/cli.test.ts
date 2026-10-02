@@ -105,7 +105,9 @@ describe('Prime team control (H-2301)', () => {
 // H-676: with pool workers a role is several loops, and its first worker
 // usually keeps the role's name. A control aimed at the role has to reach all
 // of them; one aimed at a single worker has to leave its siblings alone.
-describe('role-level control of pool workers (H-676)', () => {
+// Each case spawns the CLI up to five times in series: 1.7s alone, 6.5s in
+// the full parallel suite (H-671), so vitest's 5s default measured the host.
+describe('role-level control of pool workers (H-676)', { timeout: 20_000 }, () => {
   function pool(): string {
     const home = mkdtempSync(join(tmpdir(), 'rev-pool-cli-'));
     const loop = (name: string, extra = '') => `[loops.${name}]\n${extra}workstream = "w"\ncwd = "${join(home, name)}"\nruntime = "mock"\n`;
