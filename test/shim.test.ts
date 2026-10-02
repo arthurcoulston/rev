@@ -97,6 +97,36 @@ describe('selected runtime metering (H-1903)', () => {
   });
 });
 
+describe('a journaled session names its process group (H-685)', () => {
+  it('writes the group id the CLI runs in before the CLI starts, and a CLI it cannot find is apparatus', () => {
+    const home = mkdtempSync(join(tmpdir(), 'rev-group-'));
+    const bin = join(home, 'bin');
+    const constitution = join(home, 'PROFILE.md');
+    execFileSync('mkdir', ['-p', bin]);
+    writeFileSync(constitution, 'test constitution');
+    writeFileSync(join(bin, 'claude'), `#!/bin/sh\nps -o pgid= -p $$ | tr -d ' ' > "$REV_HOME/cli-group"\nprintf '%s\\n' '${JSON.stringify({ usage: { input_tokens: 1, output_tokens: 1 }, total_cost_usd: 0, result: 'done', is_error: false })}'\n`);
+    chmodSync(join(bin, 'claude'), 0o755);
+    const before = { PATH: process.env['PATH'], REV_HOME: process.env['REV_HOME'] };
+    process.env['REV_HOME'] = home;
+    try {
+      const loop = { name: 'w1', seat: 'builder', runtime: 'claude', model: 'm', version: '0', cwd: home, constitution } as LoopConfig;
+      const groupFile = join(home, 'launch.group');
+      process.env['PATH'] = `${bin}:${before.PATH}`;
+      expect(runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'm', undefined, 'rev:w1:1:1:1', groupFile).rc).toBe(0);
+      const written = readFileSync(groupFile, 'utf8').trim();
+      expect(written).toMatch(/^\d+$/);
+      expect(readFileSync(join(home, 'cli-group'), 'utf8').trim()).toBe(written);
+
+      process.env['PATH'] = '/usr/bin:/bin';
+      const missing = runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'm', undefined, 'rev:w1:1:1:2', join(home, 'second.group'));
+      expect(missing).toMatchObject({ rc: 78, cls: 'apparatus' });
+      expect(missing.outputTail).toMatch(/^claude CLI not runnable: .*claude/);
+    } finally {
+      for (const [k, v] of Object.entries(before)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  });
+});
+
 describe('pool worker launch generation (H-574)', () => {
   // The Helmo MCP server is the session's only write path, so the generation
   // must reach the config the model CLI is actually handed, not just the mock.

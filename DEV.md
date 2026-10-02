@@ -121,7 +121,16 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   the old generation — and the prompt says it was resumed, names the
   workspace, and points at the ticket's last recorded step. A restart after a
   crash settles the dead launch's journal and keeps the claim the same way, so
-  a child that outlived its loop can write nothing after the resume. Only a
+  a child that outlived its loop can write nothing after the resume. That
+  fences the record, not the workspace (H-685): every journaled session's shell
+  writes its process group id to `<entry>.group` before it execs the CLI, and
+  while that group is still running the restarted worker logs
+  `launch-session-running` and launches nothing — polling like the seat guard,
+  no IDLE marker, no iteration spent — then settles and resumes once it has
+  gone (`launch-session-ended`). It never kills the session: its generation is
+  still current, so what it finishes is valid. A group it cannot signal counts
+  as running; a group id whose leader started well after the dispatch is a
+  later process that inherited the id. Only a
   claim never worked goes back to `open` (seat reservation kept), released as
   the launch's own generation: a session that never started (`apparatus`), a
   failed pre-dispatch revalidation, a suppressed replay, or a journal write
@@ -339,7 +348,8 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   only the loop process. The cost is deliberate and worth naming: a SIGKILLed
   loop now leaves its session running to completion as an orphan — one
   session's tokens, spent finishing and closing its own work, which is the
-  trade this bug was about. After a CLI returns normally, the shim terminates
+  trade this bug was about. A journaled launch's replacement waits for that
+  orphan rather than running beside it (H-685, under the pool section). After a CLI returns normally, the shim terminates
   background children still in that session group (H-1013); this cleanup is
   deliberately unreachable when the loop dies during `spawnSync`, so H-467's
   orphaned session still finishes. `test/shim.test.ts` proves both sides with

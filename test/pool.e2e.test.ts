@@ -8,6 +8,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFil
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HELMO_CLI as HELM_CLI, HELMO_SERVER, HELMO_STORE } from './helmo.js';
+import { loadRoster } from '../src/config.js';
+import { launchClaim } from '../src/helm.js';
 
 const { Store } = await import(HELMO_STORE);
 
@@ -173,8 +175,10 @@ describe('pool workers on one seat (H-574)', { timeout: 60000 }, () => {
     expect(events(e, 'w1')).toMatch(new RegExp(`claim-released\\s+${id} its session never started`));
   });
 
-  it('a killed worker keeps its claim, the next launch resumes it, and the dead launch can write nothing', async () => {
-    const e = setup((h) => worker('w1', h, `${BOUND}; touch $REV_HOME/model-started; [ -f $REV_HOME/second ] || sleep 30; ${FINISH}`) + worker('w2', h, 'true'));
+  it('a killed worker keeps its claim, holds its next launch while the dead launch\'s session runs, then resumes it, and the dead launch can write nothing', async () => {
+    // The session outlives its SIGKILLed loop: it runs in its own process
+    // group (H-1089). It waits for the test to let it go, then exits.
+    const e = setup((h) => worker('w1', h, `${BOUND}; touch $REV_HOME/model-started; until [ -f $REV_HOME/release ]; do sleep 0.1; done`) + worker('w2', h, 'true'));
     const id = seed(e, 'Work interrupted by a crash');
 
     const child = runAsync(e, 'w1');
@@ -182,20 +186,43 @@ describe('pool workers on one seat (H-574)', { timeout: 60000 }, () => {
     expect(ticket(e, id).status).toBe('in_progress');
     const loopPid = Number(/loop-start\s+pid=(\d+)/.exec(events(e, 'w1'))![1]);
     const dead = journal(e, 'w1')[0]!['launch_id'] as string;
+    const groupFile = readdirSync(join(e.home, 'state', 'w1', 'launches')).find((n) => n.endsWith('.group'))!;
+    const group = Number(readFileSync(join(e.home, 'state', 'w1', 'launches', groupFile), 'utf8').trim());
     process.kill(loopPid, 'SIGKILL');
     child.kill('SIGKILL');
     await exited(child);
-    writeFileSync(join(e.home, 'second'), '');
+    const groupAlive = (): boolean => { try { process.kill(-group, 0); return true; } catch { return false; } };
+    expect(groupAlive()).toBe(true);
 
-    execFileSync('npx', ['tsx', REV_CLI, 'run', 'w1', '--count', '1'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+    const restarted = runAsync(e, 'w1');
+    try {
+      // A restart while that session runs launches nothing for this worker,
+      // and Helmo still holds the claim for the dead launch's generation.
+      await waitFor(() => events(e, 'w1').includes('launch-session-running'));
+      await new Promise((r) => setTimeout(r, 1500)); // several polls at 0.1s
+      let log = events(e, 'w1');
+      expect(log).toMatch(new RegExp(`launch-session-running\\s+${dead} session group ${group} is still running`));
+      expect(log).not.toMatch(/launch-claimed\s+resumed/);
+      expect(log).not.toMatch(/claim-kept/);
+      expect(readFileSync(join(e.home, 'bound'), 'utf8').trim().split('\n')).toEqual([`w1 ${id}`]);
+      expect(journal(e, 'w1').find((j) => j['launch_id'] === dead)!['phase']).toBe('dispatching');
+      expect(restarted.exitCode).toBeNull();
 
-    const log = events(e, 'w1');
-    expect(log).toMatch(new RegExp(`claim-kept\\s+${id} recovered dispatching`));
-    expect(log).toMatch(/launch-quarantined.*recovered dispatching/);
-    expect(log).toMatch(new RegExp(`launch-claimed\\s+resumed ${id}`));
-    expect(log).not.toMatch(/claim-released/);
-    expect(ticket(e, id).status).toBe('done');
-    expect(readFileSync(join(e.home, 'bound'), 'utf8').trim().split('\n')).toEqual([`w1 ${id}`, `w1 ${id}`]);
+      // Once it ends, the same process settles the dead launch and resumes.
+      writeFileSync(join(e.home, 'release'), '');
+      await exited(restarted);
+      expect(groupAlive()).toBe(false);
+      log = events(e, 'w1');
+      expect(log).toMatch(/launch-session-ended/);
+      expect(log).toMatch(new RegExp(`claim-kept\\s+${id} recovered dispatching`));
+      expect(log).toMatch(/launch-quarantined.*recovered dispatching/);
+      expect(log).toMatch(new RegExp(`launch-claimed\\s+resumed ${id}`));
+      expect(log).not.toMatch(/claim-released/);
+      expect(readFileSync(join(e.home, 'bound'), 'utf8').trim().split('\n')).toEqual([`w1 ${id}`, `w1 ${id}`]);
+    } finally {
+      writeFileSync(join(e.home, 'release'), '');
+      restarted.kill('SIGKILL');
+    }
     // A child of the dead launch that outlived it writes as that generation,
     // which the resume retired.
     let refused = '';
@@ -205,6 +232,26 @@ describe('pool workers on one seat (H-574)', { timeout: 60000 }, () => {
       });
     } catch (err) { refused = String((err as { stderr?: string }).stderr); }
     expect(refused).toMatch(/stale_generation/);
+  });
+
+  it('a replayed launch id whose claim has since been resumed is refused and never reads as a claim to dispatch on', () => {
+    const e = setup((h) => worker('w1', h, 'true') + worker('w2', h, 'true'));
+    const id = seed(e, 'Work whose first launch was replayed');
+    const before = process.env['REV_HOME'];
+    process.env['REV_HOME'] = e.home;
+    let roster: ReturnType<typeof loadRoster>;
+    try { roster = loadRoster(); } finally { if (before === undefined) delete process.env['REV_HOME']; else process.env['REV_HOME'] = before; }
+    const l = roster.loops['w1']!;
+
+    expect(launchClaim(roster.global, l, 'rev:w1:1:1:1')).toMatchObject({ act: 'launch', how: 'claimed', ticketId: id });
+    // The same id asked again while it still holds the claim answers the same
+    // receipt: that is how an uncertain reply is reconciled.
+    expect(launchClaim(roster.global, l, 'rev:w1:1:1:1')).toMatchObject({ act: 'launch', how: 'claimed', ticketId: id });
+    expect(launchClaim(roster.global, l, 'rev:w1:1:2:2')).toMatchObject({ act: 'launch', how: 'claimed', ticketId: id, resumed: true });
+    const stale = launchClaim(roster.global, l, 'rev:w1:1:1:1');
+    expect(stale).toMatchObject({ act: 'deny', how: 'unavailable', ticketId: null });
+    expect(stale.reason).toMatch(/launch_claim_stale/);
+    expect(ticket(e, id).status).toBe('in_progress');
   });
 
   it('claims only inside its project lane', () => {

@@ -51,7 +51,7 @@ export function sessionEnv(l: LoopConfig): NodeJS.ProcessEnv {
 
 // `generation` is a pool worker's launch id (H-574): the session's Helmo
 // identity carries it, so its writes bind to the claim this launch holds.
-export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: string, model = l.model, choice?: RunChoice, generation?: string): SessionResult {
+export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: string, model = l.model, choice?: RunChoice, generation?: string, groupFile?: string): SessionResult {
   const runtime = choice?.runtime ?? l.runtime;
   // Apparatus pre-flight, fail closed: never launch a half-instructed agent.
   if (runtime !== 'mock') {
@@ -64,11 +64,11 @@ export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: stri
   }
   switch (runtime) {
     case 'claude':
-      return runClaude(g, l, iterationPrompt, model, generation);
+      return runClaude(g, l, iterationPrompt, model, generation, groupFile);
     case 'codex':
-      return runCodex(g, l, iterationPrompt, model, choice, generation);
+      return runCodex(g, l, iterationPrompt, model, choice, generation, groupFile);
     case 'mock':
-      return runMock(l, iterationPrompt, model, generation);
+      return runMock(l, iterationPrompt, model, generation, groupFile);
     default:
       return { rc: 78, cls: 'apparatus', outputTail: `unsupported runtime '${runtime as string}' — add a shim branch` };
   }
@@ -204,6 +204,19 @@ export function endSessionGroup(pid: number | undefined): void {
   }
 }
 
+// A journaled launch's session writes its own group id before it becomes the
+// CLI (H-685). spawnSync only learns the pid once the session has ended, and a
+// loop SIGKILLed in between never does; the next process reads this file to
+// tell whether the dead launch's session is still running before it launches
+// a replacement in the same workspace. Detached, so the shell leads the group
+// and exec keeps its pid. A CLI exec cannot find exits 126/127 here instead of
+// surfacing as a spawn error, so callers read those as apparatus too.
+function sessionArgv(cmd: string, args: string[], groupFile?: string): [string, string[]] {
+  return groupFile ? ['/bin/sh', ['-c', 'echo $$ > "$0" && exec "$@"', groupFile, cmd, ...args]] : [cmd, args];
+}
+const unrunnable = (res: { error?: Error; status: number | null; stderr?: string | null }, groupFile?: string): string | null =>
+  res.error ? res.error.message : groupFile && (res.status === 126 || res.status === 127) ? (res.stderr ?? '').trim().slice(0, 300) : null;
+
 // The system prompt a session carries: the constitution, then each roster
 // skill whole (H-247) — a loop that touches Drive carries file-stewardship
 // the way a desk session loads it. One file because the CLI takes one path.
@@ -259,7 +272,7 @@ export function sessionSpec(
   };
 }
 
-function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, generation?: string): SessionResult {
+function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, generation?: string, groupFile?: string): SessionResult {
   const scratch = mkdtempSync(join(tmpdir(), 'rev-'));
   try {
     const mcpConfig = writeMcpConfig(g, l, scratch, model, generation);
@@ -269,19 +282,19 @@ function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string
       writeFileSync(systemFile, systemPrompt(l));
     }
     const res = spawnSync(
-      'claude',
-      [
+      ...sessionArgv('claude', [
         '-p', prompt,
         '--model', model,
         '--append-system-prompt-file', systemFile,
         '--strict-mcp-config', '--mcp-config', mcpConfig,
         '--dangerously-skip-permissions',
         '--output-format', 'json',
-      ],
+      ], groupFile),
       { cwd: l.cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, env: sessionEnv(l), stdio: ['ignore', 'pipe', 'pipe'], ...SESSION_GROUP },
     );
     endSessionGroup(res.pid);
-    if (res.error) return { rc: 78, cls: 'apparatus', outputTail: `claude CLI not runnable: ${res.error.message}` };
+    const claudeUnrunnable = unrunnable(res, groupFile);
+    if (claudeUnrunnable !== null) return { rc: 78, cls: 'apparatus', outputTail: `claude CLI not runnable: ${claudeUnrunnable}` };
     const stdout = res.stdout ?? '';
     let tokens: number | undefined, cost: number | undefined, tail = stdout;
     try {
@@ -411,15 +424,14 @@ export function codexFailureLine(status: number | null, run: CodexRun): string {
     (run.failure ? `, error event: ${run.failure.slice(0, 500)}` : '') + '\n';
 }
 
-function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, choice?: RunChoice, generation?: string): SessionResult {
+function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, choice?: RunChoice, generation?: string, groupFile?: string): SessionResult {
   // Same contract as runClaude, codex's way: prompt via stdin (a constitution
   // in argv is world-readable via ps and bumps into argv limits), MCP via the
   // whole-table -c override, results from the --json event stream. Approvals
   // and sandbox off matches the claude posture — one permission story per
   // fleet, whichever CLI runs the iteration.
   const res = spawnSync(
-    'codex',
-    codexArgs(model, codexMcpArg(mcpServers(g, l, model, undefined, generation)), choice?.config),
+    ...sessionArgv('codex', codexArgs(model, codexMcpArg(mcpServers(g, l, model, undefined, generation)), choice?.config), groupFile),
     {
       cwd: l.cwd,
       encoding: 'utf8',
@@ -430,7 +442,8 @@ function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string,
     },
   );
   endSessionGroup(res.pid);
-  if (res.error) return { rc: 78, cls: 'apparatus', outputTail: `codex CLI not runnable: ${res.error.message}` };
+  const codexUnrunnable = unrunnable(res, groupFile);
+  if (codexUnrunnable !== null) return { rc: 78, cls: 'apparatus', outputTail: `codex CLI not runnable: ${codexUnrunnable}` };
   const run = parseCodexEvents(res.stdout ?? '');
   const tokens = run.usage ? run.usage.input + run.usage.output : undefined;
   const cost = run.usage ? notionalCost(run.usage, choice?.prices?.[model]) : undefined;
@@ -459,9 +472,9 @@ function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string,
 // the harness itself is testable (and installs verifiable) without an agent CLI
 // or tokens. The command's exit code flows through the ladder unchanged, so
 // tests can exercise every failure class.
-function runMock(l: LoopConfig, prompt: string, model: string, generation?: string): SessionResult {
+function runMock(l: LoopConfig, prompt: string, model: string, generation?: string, groupFile?: string): SessionResult {
   if (!l.mock_cmd) return { rc: 78, cls: 'apparatus', outputTail: "mock runtime requires 'mock_cmd' in the roster" };
-  const res = spawnSync('bash', ['-c', l.mock_cmd], {
+  const res = spawnSync(...sessionArgv('bash', ['-c', l.mock_cmd], groupFile), {
     cwd: l.cwd,
     encoding: 'utf8',
     env: { ...sessionEnv(l), REV_PROMPT: prompt, REV_MODEL: model, HELMO_ACTOR: JSON.stringify(loopActor(l, model, undefined, generation)) },

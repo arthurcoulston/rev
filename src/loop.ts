@@ -15,7 +15,7 @@ import { logEvent, occupiedPid, paceAutoRelease, pidAlive, runningStamp, sClear,
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig, RunChoice } from './types.js';
-import { recordLaunchAdmission, recordLaunchClaim, recordLaunchDispatch, recordLaunchIntent, settleLaunch, unsettledLaunches } from './launch-journal.js';
+import { launchGroupFile, launchSessionRunning, recordLaunchAdmission, recordLaunchClaim, recordLaunchDispatch, recordLaunchIntent, settleLaunch, unsettledLaunches } from './launch-journal.js';
 
 const sleep = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
 
@@ -116,27 +116,44 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   // worker's next launch-claim resumes the ticket under a new generation,
   // which Helmo retires the dead launch's generation for in the same
   // transaction — so a child that outlived its loop can write nothing more.
-  for (const recovered of unsettledLaunches(l.name)) {
-    if (!recovered.admission_id && !recovered.claim) continue;
-    try {
-      if (recovered.admission_id) {
-        launchQuarantine(g, recovered.admission_id, recovered.launch_id, `Rev recovered an unsettled ${recovered.phase} launch after process restart.`);
+  // That fence covers the record, not the workspace (H-685): a session whose
+  // group is still running holds its entry unsettled, and this worker
+  // launches nothing until it has gone. It is never killed here; its
+  // generation is still current, so what it finishes is valid work.
+  const runningSessions = new Set<string>();
+  const recoverLaunches = (only?: Set<string>): void => {
+    for (const recovered of unsettledLaunches(l.name)) {
+      if (!recovered.admission_id && !recovered.claim) continue;
+      if (only && !only.has(recovered.launch_id)) continue;
+      const session = launchSessionRunning(l.name, recovered);
+      if (session.running) {
+        if (!runningSessions.has(recovered.launch_id)) logEvent(l.name, 'launch-session-running', `${recovered.launch_id} ${session.why}; launches held until it ends`);
+        runningSessions.add(recovered.launch_id);
+        continue;
       }
-      if (recovered.claim) {
-        logEvent(l.name, 'claim-kept', `${recovered.ticket_id ?? 'unanswered claim'} recovered ${recovered.phase}; the next launch resumes it`);
+      runningSessions.delete(recovered.launch_id);
+      try {
+        if (recovered.admission_id) {
+          launchQuarantine(g, recovered.admission_id, recovered.launch_id, `Rev recovered an unsettled ${recovered.phase} launch after process restart.`);
+        }
+        if (recovered.claim) {
+          logEvent(l.name, 'claim-kept', `${recovered.ticket_id ?? 'unanswered claim'} recovered ${recovered.phase}; the next launch resumes it`);
+        }
+        settleLaunch(l.name, recovered.launch_id, 'quarantined');
+        logEvent(l.name, 'launch-quarantined', `${recovered.launch_id} recovered ${recovered.phase}`);
+      } catch (e) {
+        logEvent(l.name, 'launch-quarantine-failed', `${recovered.launch_id} ${String(e).split('\n')[0]!.slice(0, 160)}`);
       }
-      settleLaunch(l.name, recovered.launch_id, 'quarantined');
-      logEvent(l.name, 'launch-quarantined', `${recovered.launch_id} recovered ${recovered.phase}`);
-    } catch (e) {
-      logEvent(l.name, 'launch-quarantine-failed', `${recovered.launch_id} ${String(e).split('\n')[0]!.slice(0, 160)}`);
     }
-  }
+  };
+  recoverLaunches();
 
   let i = 0;
   let durWindow: number[] = [];
   let tAvg = 0;
   let firstPoll = true; // restart pickup: see the wake gate below (H-426)
   let seatHeld = false; // same-seat guard episode flag: log once per hold, not per poll (H-558)
+  let sessionHeld = false; // dead launch's session still running: same, per hold (H-685)
   const lineage = ancestryStamp();
 
   // Bounded runs and the iteration ceiling. A helper because an iteration can
@@ -264,6 +281,23 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       }
     }
 
+    // A dead launch's session still running here (H-685): like the seat guard,
+    // this waits on a process, not on the queue, so it neither idles at a
+    // cursor nor spends an iteration. recoverLaunches settles each entry once
+    // its group has gone, and the next pass launches.
+    if (runningSessions.size) recoverLaunches(new Set(runningSessions));
+    if (runningSessions.size) {
+      if (!sessionHeld) {
+        sessionHeld = true;
+        console.log(`rev: '${l.name}' holding launches — a session of dead launch ${[...runningSessions].join(', ')} is still running in its workspace. Polling until it ends.`);
+      }
+      await sleep(g.poll_seconds);
+      continue;
+    }
+    if (sessionHeld) {
+      sessionHeld = false;
+      logEvent(l.name, 'launch-session-ended', 'the dead launch\'s session has ended; launching resumes');
+    }
     const before = tryWakeCheck(g, l, 0);
     if (!before) {
       await sleep(g.poll_seconds);
@@ -621,7 +655,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       await sleep(g.poll_seconds);
       continue;
     }
-    const res = runSession(g, l, prompt, model, run, claimedTicket ? journaledLaunchId ?? undefined : undefined);
+    const res = runSession(g, l, prompt, model, run, claimedTicket ? journaledLaunchId ?? undefined : undefined, journaledLaunchId ? launchGroupFile(l.name, journaledLaunchId) : undefined);
     let launchTrusted = true;
 
     if (journaledLaunchId && admission.admissionId) {
