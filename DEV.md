@@ -103,11 +103,14 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   guard exempts only the peer sessions derived from the loaded roster; an
   unlisted desk session or subagent still holds every worker in the seat.
   Their `cwd` paths must be separate writable workspaces; the roster refuses
-  two workers of one seat in the same `cwd`, and refuses a `'*'` pool.
+  two workers of one seat whose `cwd` is the same real directory (a symlink
+  alias included), nested one inside the other, or inside one git worktree
+  and so one index (H-671, `writableDestination` in config.ts), and refuses a
+  `'*'` pool.
   **Pool workers launch on a claim, not a choice** (H-574). A loop sharing its
   seat skips `launch-admit` and, just before `run-start` (after every capacity
   exit, before the probe decision), calls helm-cli `launch-claim --workstream W
-  --assignee <seat> --launch-id <id> [--project P]` written by the worker
+  --assignee <seat> --launch-id <id> [--project P] [--tickets H-1,H-2]` written by the worker
   itself — seat name, `rev:<loop>` session, `generation` = the launch id — so
   Helmo selects, workflow-admits and claims in one transaction, bound to that
   one attempt. The session's `HELMO_ACTOR` (MCP env, and the mock's env)
@@ -137,7 +140,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   Helmo answers the receipt it granted while the claim stands, claims afresh
   if the first ask never landed, or refuses `launch_claim_stale` /
   `stale_generation` once it has moved on (`how: 'stale'`), which alone
-  settles the entry `quarantined` and lets the launch take a fresh id. Until
+  settles the entry `quarantined` and lets the launch take a fresh id. A
+  receipt that does not match the worker's scope (`how: 'mismatch'`, H-671)
+  is an answer too, never re-asked: a claim it granted to this launch is put
+  back and the launch denied. Until
   Helmo answers the worker polls with no IDLE marker and no iteration spent:
   its own claim is not motion that would wake it. Only a
   claim never worked goes back to `open` (seat reservation kept), released as
@@ -157,8 +163,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   `needs_human` and hands the worker its next ticket. A
   store without `launch-claim` denies every pool launch — without the atomic
   claim two workers race the same ticket. Nothing ready means `launch-idle`
-  and no session. `project` is the worker's lane; it is refused on a loop
-  with no pool.
+  and no session. `project` is the worker's lane and `tickets` its exact
+  allowlist (H-671) — what keeps two workers in ONE project off each other's
+  work; Rev refuses a receipt naming a different allowlist or a ticket outside
+  it, and the roster refuses one ticket in two allowlists. Both are refused on
+  a loop with no pool.
   **A role is addressed as a role** (H-676). The first worker usually keeps
   the role's name, so `stop`/`resume`/`pace`/`team` resolve through
   `controlTargets` (config.ts): a seat with more than one loop, or a seat no
@@ -167,10 +176,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   halt is written to each worker. Anything that routes work to a role must ask
   which worker can draw it: `drawsScope` (helm.ts) says a one-worker seat
   draws its seat's work in any stream, a pool worker only in its exact
-  workstream and lane. The anomaly investigator is chosen with it and
+  workstream and lane, and with an allowlist only the tickets it names — so
+  never a newly filed escalation. The anomaly investigator is chosen with it and
   assigned by seat, never by loop name — a pool worker's own name is no
   assignee anything wakes on. `status --json` prints each loop's `seat`,
-  `pool`, `workstream` and `project` beside its state, for consumers outside
+  `pool`, `workstream`, `project` and `tickets` beside its state, for consumers outside
   Rev (gp-crew's handoff guard) that must answer "can this role take this
   ticket"; the human table is unchanged because estate tools parse its header.
   **Workflow launch admission** is the last gate before a session is spent

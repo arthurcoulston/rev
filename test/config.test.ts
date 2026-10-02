@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, symlinkSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { controlTargets, loadRoster } from '../src/config.js';
@@ -51,6 +52,59 @@ describe('parallel workers', () => {
   it('refuses two workers on one seat sharing a writable checkout (H-574)', () => {
     roster([['builder', 'cwd = "/tmp/shared"\n'], ['builder-2', 'seat = "builder"\ncwd = "/tmp/shared"\n']]);
     expect(() => loadRoster()).toThrow(/share seat 'builder' and cwd \/tmp\/shared/);
+  });
+
+  describe('writable destinations compare by what they are, not how they are spelled (H-671)', () => {
+    function git(...args: string[]) { execFileSync('git', args, { stdio: 'ignore' }); }
+    function repo(): string {
+      const dir = mkdtempSync(join(tmpdir(), 'rev-cfg-repo-'));
+      git('-C', dir, 'init', '-q');
+      git('-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'root');
+      return dir;
+    }
+    const pair = (a: string, b: string) => roster([['builder', `cwd = "${a}"\n`], ['builder-2', `seat = "builder"\ncwd = "${b}"\n`]]);
+
+    it('refuses a symlink alias of the same checkout', () => {
+      const r = repo();
+      const alias = join(mkdtempSync(join(tmpdir(), 'rev-cfg-alias-')), 'alias');
+      symlinkSync(r, alias);
+      pair(r, alias);
+      expect(() => loadRoster()).toThrow(/is the same directory/);
+    });
+
+    it('refuses a checkout nested inside another worker\'s, existing or not', () => {
+      const r = repo();
+      pair(r, join(r, 'out', 'not-yet'));
+      expect(() => loadRoster()).toThrow(/nested checkouts/);
+    });
+
+    it('refuses two directories of one worktree, which share its index', () => {
+      const r = repo();
+      mkdirSync(join(r, 'a')); mkdirSync(join(r, 'b'));
+      pair(join(r, 'a'), join(r, 'b'));
+      expect(() => loadRoster()).toThrow(/one git worktree and index/);
+    });
+
+    it('accepts distinct worktrees of one repository', () => {
+      const r = repo();
+      const wt = join(mkdtempSync(join(tmpdir(), 'rev-cfg-wt-')), 'wt');
+      git('-C', r, 'worktree', 'add', '-q', '-b', 'second', wt);
+      pair(r, wt);
+      expect(Object.keys(loadRoster().loops)).toEqual(['builder', 'builder-2']);
+    });
+  });
+
+  it('loads exact ticket allowlists and refuses one ticket in two (H-671)', () => {
+    roster([['builder', 'tickets = ["H-655", "H-684"]\n'], ['builder-2', 'seat = "builder"\ntickets = ["H-654"]\n']]);
+    expect(loadRoster().loops['builder']!.tickets).toEqual(['H-655', 'H-684']);
+    roster([['builder', 'tickets = ["H-655", "H-684"]\n'], ['builder-2', 'seat = "builder"\ntickets = ["H-684"]\n']]);
+    expect(() => loadRoster()).toThrow(/both list H-684/);
+    for (const bad of ['[]', '["H-1", "H-1"]', '["H 1"]', '"H-1"']) {
+      roster([['builder', `tickets = ${bad}\n`], ['builder-2', 'seat = "builder"\n']]);
+      expect(() => loadRoster()).toThrow(/distinct exact ticket ids/);
+    }
+    roster([['builder', 'tickets = ["H-1"]\n'], ['reviewer']]);
+    expect(() => loadRoster()).toThrow(/'tickets' scopes a pool worker's claims/);
   });
 
   it('refuses a store-wide pool worker, whose claim has no exact workstream (H-574)', () => {

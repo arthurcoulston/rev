@@ -271,7 +271,7 @@ export function poolWorker(l: LoopConfig): boolean {
  *  lacks the command must stop the pool rather than let it race. */
 export interface LaunchClaim {
   act: 'launch' | 'idle' | 'deny';
-  how: 'claimed' | 'nothing_ready' | 'denied' | 'unsupported' | 'unavailable' | 'stale';
+  how: 'claimed' | 'nothing_ready' | 'denied' | 'unsupported' | 'unavailable' | 'stale' | 'mismatch';
   reason: string;
   ticketId: string | null;
   workflowAttemptId?: string;
@@ -285,7 +285,8 @@ export interface LaunchClaim {
 }
 
 export function launchClaimArgs(l: LoopConfig, id: string): string[] {
-  return ['launch-claim', '--workstream', l.workstream, '--assignee', seatName(l), '--launch-id', id, ...(l.project ? ['--project', l.project] : [])];
+  return ['launch-claim', '--workstream', l.workstream, '--assignee', seatName(l), '--launch-id', id,
+    ...(l.project ? ['--project', l.project] : []), ...(l.tickets ? ['--tickets', l.tickets.join(',')] : [])];
 }
 
 export function launchClaim(g: GlobalConfig, l: LoopConfig, id: string): LaunchClaim {
@@ -295,7 +296,7 @@ export function launchClaim(g: GlobalConfig, l: LoopConfig, id: string): LaunchC
   try {
     const res = run(g, launchClaimArgs(l, id), loopActor(l, undefined, undefined, id), true) as {
       admitted?: boolean; claimed?: boolean; resumed?: boolean; ticket_id?: string; workflow_attempt_id?: string | null; admission_id?: string | null;
-      launch_id?: string; admission_launch_id?: string | null; scope?: { session?: string; assignee?: string; workstream?: string; project?: string | null };
+      launch_id?: string; admission_launch_id?: string | null; scope?: { session?: string; assignee?: string; workstream?: string; project?: string | null; tickets?: string[] };
     };
     if (res.admitted === false && res.claimed === undefined) return { act: 'idle', how: 'nothing_ready', reason: 'nothing ready to claim', ticketId: null };
     // The receipt must name THIS worker's exact scope: a replayed id answered
@@ -303,8 +304,20 @@ export function launchClaim(g: GlobalConfig, l: LoopConfig, id: string): LaunchC
     const exact = res.claimed === true && typeof res.ticket_id === 'string' && res.launch_id === id
       && res.scope?.session === seatId(l) && res.scope.assignee === seatName(l)
       && res.scope.workstream === l.workstream && (res.scope.project ?? undefined) === l.project
+      // A store that ignored the allowlist would hand back any project ticket.
+      && JSON.stringify(res.scope.tickets) === JSON.stringify(l.tickets && [...l.tickets].sort())
+      && (!l.tickets || l.tickets.includes(res.ticket_id))
       && Boolean(res.workflow_attempt_id) === Boolean(res.admission_id);
-    if (!exact) return { act: 'deny', how: 'unavailable', reason: `Helmo's claim receipt for ${id} did not match this worker`, ticketId: res.ticket_id ?? null };
+    if (!exact) {
+      // An answer, not a lost reply (H-671): asking again under the same id
+      // replays the same receipt forever. A claim granted to THIS launch is
+      // put down so the ticket is not stranded; anyone else's is not ours to
+      // move, and Helmo's fence would refuse it anyway.
+      const ours = res.claimed === true && typeof res.ticket_id === 'string' && res.launch_id === id && res.scope?.session === seatId(l);
+      let released = false;
+      if (ours) { try { released = releaseClaim(g, l, res.ticket_id!, id, `Helmo's receipt did not match this worker's scope`); } catch { /* left for the operator; the launch is still denied */ } }
+      return { act: 'deny', how: 'mismatch', reason: `Helmo's claim receipt for ${id} did not match this worker${ours ? (released ? `; released ${res.ticket_id}` : `; ${res.ticket_id} could not be released`) : ''}`, ticketId: res.ticket_id ?? null };
+    }
     return {
       act: 'launch', how: 'claimed', ticketId: res.ticket_id!,
       workflowAttemptId: res.workflow_attempt_id ?? undefined,
@@ -457,11 +470,13 @@ export function openEscalation(g: GlobalConfig, l: LoopConfig): string | null {
 /** Whether this loop would ever start a ticket reserved to its seat in this
  *  scope (H-676). A one-worker seat draws its seat's work in any stream; a pool
  *  worker launches only on Helmo's claim, which is scoped to its exact
- *  workstream and project lane, so work outside them would sit reserved to a
- *  live role that never picks it up. */
-export function drawsScope(l: LoopConfig, workstream: string, project: string | null = null): boolean {
+ *  workstream and project lane, and to its exact ticket allowlist where it has
+ *  one (H-671), so work outside them would sit reserved to a live role that
+ *  never picks it up. A ticket not yet filed is in no allowlist. */
+export function drawsScope(l: LoopConfig, workstream: string, project: string | null = null, ticketId: string | null = null): boolean {
   if (!poolWorker(l)) return true;
-  return l.workstream === workstream && (l.project === undefined || l.project === project);
+  return l.workstream === workstream && (l.project === undefined || l.project === project)
+    && (l.tickets === undefined || (ticketId !== null && l.tickets.includes(ticketId)));
 }
 
 export function investigatorFor(g: GlobalConfig, stopped: LoopConfig): LoopConfig | null {

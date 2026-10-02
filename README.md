@@ -45,7 +45,8 @@ entries distinct names and writable `cwd` paths and setting `seat` to the
 role name. Worker state, launch identity and spend remain per loop; Helmo
 authorship and ticket ownership remain on the seat. Such pool workers need a
 Helmo with `launch-claim`: each launch is handed one atomically claimed ticket
-(optionally only from its `project` lane) instead of choosing from the queue,
+(optionally only from its `project` lane or an exact `tickets` allowlist)
+instead of choosing from the queue,
 and work a worker leaves unfinished is resumed by that same worker's next
 launch. `rev stop <role>`, `resume` and `pace` reach every worker of the
 role; add `--worker` to address only the loop of that exact name.

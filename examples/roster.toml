@@ -95,10 +95,12 @@ pace = 1.0                            # velocity fraction; 0.5 = half speed
 # through the same-seat guard; a desk session or subagent still makes every
 # worker in the seat stand down. Helmo's atomic claim keeps two workers from
 # taking the same ticket; each session is handed its ticket. `project` limits
-# a pool worker to one project's tickets.
+# a pool worker to one project's tickets, and `tickets` to an exact allowlist,
+# which two workers sharing one project need to stay off each other's work.
 # [loops.example-worker-2]
 # seat = "example-worker"
 # project = "R-29"
+# tickets = ["H-655", "H-684"]
 # workstream = "my-workstream"
 # cwd = "~/projects/my-project-worker-2" # never share a writable checkout
 # provider = "claude"

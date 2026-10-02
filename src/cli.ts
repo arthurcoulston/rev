@@ -335,7 +335,7 @@ switch (cmd) {
           return {
             loop: l.name, seat: l.seat ?? l.name, pool: (l.peer_sessions?.length ?? 0) > 1,
             state: state(l.name), pid: pidAlive(l.name), pace: pending ? `pending:${pending}` : (sValue(l.name, 'PACE') ?? '1'),
-            workstream: l.workstream, project: l.project ?? null,
+            workstream: l.workstream, project: l.project ?? null, tickets: l.tickets ?? null,
           };
         }),
       }, null, 2));

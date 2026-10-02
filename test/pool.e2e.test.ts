@@ -38,7 +38,7 @@ ${extra}`;
 function setup(loops: (home: string) => string, cli = HELM_CLI): Env {
   const home = mkdtempSync(join(tmpdir(), 'rev-pool-'));
   const db = join(home, 'helm.db');
-  for (const w of ['w1', 'w2']) mkdirSync(join(home, w), { recursive: true });
+  for (const w of ['w1', 'w2', 'w3', 'w4']) mkdirSync(join(home, w), { recursive: true });
   writeFileSync(join(home, 'roster.toml'), `[global]
 helmo_cli = "${cli}"
 helmo_mcp_server = "${HELMO_SERVER}"
@@ -59,11 +59,11 @@ function helm(e: Env, args: string[]): Record<string, unknown> {
 
 // helm-cli has no --project flag on create, so a lane's ticket is filed
 // through the store itself.
-function seed(e: Env, title: string, project?: string): string {
+function seed(e: Env, title: string, project?: string, priority?: number): string {
   if (!project) return (helm(e, ['create', '--title', title, '--body', 'pool work', '--workstream', 'rev-test', '--type', 'ops']) as { id: string }).id;
   const store = new Store(e.db);
   try {
-    return store.createTicket({ name: 'seeder', kind: 'agent', model: 't', version: '0' }, { title, body: 'pool work', workstream: 'rev-test', type: 'ops', project }).id;
+    return store.createTicket({ name: 'seeder', kind: 'agent', model: 't', version: '0' }, { title, body: 'pool work', workstream: 'rev-test', type: 'ops', project, priority }).id;
   } finally { store.close?.(); }
 }
 
@@ -445,6 +445,67 @@ process.exit(r.status ?? 1);
 
     expect(readFileSync(join(e.home, 'bound'), 'utf8').trim()).toBe(`w1 ${inside}`);
     expect(ticket(e, outside).status).toBe('open');
+  });
+
+  it('four workers in ONE project each claim only their allowlisted ticket, overlap, and write only their own checkout (H-671)', async () => {
+    // Every session writes its output into its own cwd, then waits until all
+    // four have started: a pass is four live sessions at once, never a queue.
+    const four = `${BOUND}; echo "$T" > out-$REV_LOOP; touch $REV_HOME/started-$REV_LOOP; for i in $(seq 200); do n=$(ls $REV_HOME | grep -c '^started-'); [ "$n" -ge 4 ] && break; sleep 0.1; done; [ "$(ls $REV_HOME | grep -c '^started-')" -ge 4 ] && echo "$REV_LOOP" >> $REV_HOME/overlap; ${FINISH}`;
+    const lane = (t: string) => `project = "R-31"\ntickets = ["${t}"]\n`;
+    // Ids are minted in order, so the allowlists can name them before seeding.
+    const ids = ['H-2', 'H-3', 'H-4', 'H-5'];
+    const e = setup((h) => ['w1', 'w2', 'w3', 'w4'].map((w, i) => worker(w, h, four, lane(ids[i]!))).join(''));
+    // The decoy is first in the project's queue and in no allowlist.
+    const decoy = seed(e, 'Nobody may take this', 'R-31', 0);
+    const seeded = ['product', 'harness', 'design', 'voice'].map((t) => seed(e, t, 'R-31', 2));
+    expect([decoy, ...seeded]).toEqual(['H-1', ...ids]);
+
+    // Launched in reverse, so no worker is helped by arriving first.
+    await Promise.all(['w4', 'w3', 'w2', 'w1'].map((w) => runAsync(e, w)).map(exited));
+
+    const bound = Object.fromEntries(readFileSync(join(e.home, 'bound'), 'utf8').trim().split('\n').map((l) => l.split(' ')));
+    expect(bound).toEqual({ w1: 'H-2', w2: 'H-3', w3: 'H-4', w4: 'H-5' });
+    expect(readFileSync(join(e.home, 'overlap'), 'utf8').trim().split('\n').sort()).toEqual(['w1', 'w2', 'w3', 'w4']);
+    for (const [i, w] of ['w1', 'w2', 'w3', 'w4'].entries()) {
+      expect(readdirSync(join(e.home, w))).toEqual([`out-${w}`]);
+      expect(readFileSync(join(e.home, w, `out-${w}`), 'utf8').trim()).toBe(ids[i]);
+      expect(ticket(e, ids[i]!).status).toBe('done');
+    }
+    expect(ticket(e, decoy).status).toBe('open');
+  });
+
+  it('a worker whose allowlist holds nothing ready idles, leaving the project\'s other work alone (H-671)', () => {
+    const e = setup((h) => worker('w1', h, `${BOUND}; ${FINISH}`, 'project = "R-31"\ntickets = ["H-99"]\n') + worker('w2', h, 'true'));
+    const other = seed(e, 'Another lane\'s ticket', 'R-31');
+
+    execFileSync('npx', ['tsx', REV_CLI, 'run', 'w1', '--count', '1'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+
+    expect(existsSync(join(e.home, 'bound'))).toBe(false);
+    expect(events(e, 'w1')).toMatch(/launch-idle\s+nothing ready to claim/);
+    expect(ticket(e, other).status).toBe('open');
+  });
+
+  it('a store that ignores the allowlist is refused once, and the ticket it handed over is put back (H-671)', () => {
+    // The receipt is an answer, so it must not be re-asked forever as if the
+    // reply had been lost — this run used to spin at the poll interval.
+    const home = mkdtempSync(join(tmpdir(), 'rev-pool-wide-'));
+    const proxy = join(home, 'wide-helmo.mjs');
+    writeFileSync(proxy, `import { spawnSync } from 'node:child_process';
+const args = process.argv.slice(2);
+const at = args.indexOf('--tickets');
+if (at >= 0) args.splice(at, 2);
+const r = spawnSync(process.execPath, [${JSON.stringify(HELM_CLI)}, ...args], { stdio: 'inherit', env: process.env });
+process.exit(r.status ?? 1);
+`);
+    const e = setup((h) => worker('w1', h, `touch $REV_HOME/session-launched`, 'tickets = ["H-99"]\n') + worker('w2', h, 'true'), proxy);
+    const id = seed(e, 'Outside the allowlist');
+
+    execFileSync('npx', ['tsx', REV_CLI, 'run', 'w1', '--count', '1'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..'), timeout: 30_000 });
+
+    expect(existsSync(join(e.home, 'session-launched'))).toBe(false);
+    expect(events(e, 'w1')).toMatch(new RegExp(`launch-denied\\s+Helmo's claim receipt for \\S+ did not match this worker; released ${id}`));
+    expect(events(e, 'w1')).not.toMatch(/claim-reconciled/);
+    expect(ticket(e, id).status).toBe('open');
   });
 
   it('refuses to launch against a store with no launch-claim, leaving the ticket untouched', () => {
