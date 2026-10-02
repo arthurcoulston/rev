@@ -93,6 +93,28 @@ async function waitFor(check: () => boolean, ms = 20_000): Promise<void> {
   if (!check()) throw new Error('condition never held');
 }
 
+// A workflow-bound ticket in the real store, admissible for one launch: its
+// one requirement holds a standing pass from an independent reviewer.
+const REVIEWER = { name: 'reviewer', kind: 'agent', model: 't', version: '0' };
+function seedWorkflow(e: Env, title: string): string {
+  const store = new Store(e.db, undefined, REVIEWER);
+  try {
+    store.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'build' }] });
+    store.addWorkflowRun({ id: 'run-1', workflow_id: 'release', definition_revision: 'v1' });
+    store.addWorkflowAttempt({ id: 'attempt-1', run_id: 'run-1', stage_id: 'build', ordinal: 1 });
+    store.addWorkflowManifest({ id: 'manifest-a', attempt_id: 'attempt-1', kind: 'input', subjects: [`repo@${'0'.repeat(40)}`], creators: [{ name: 'builder', kind: 'agent' }] });
+    store.addWorkflowRequirement({ id: 'technical', workflow_id: 'release', definition_revision: 'v1', scope: 'technical', subject_manifest_id: 'manifest-a', allowed_verdicts: ['pass'], authorities: [{ name: 'reviewer', kind: 'agent' }], independence: 'different_from_manifest_creators' });
+    store.recordWorkflowDecision({ id: 'pass-1', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:1' });
+    return store.createTicket({ name: 'seeder', kind: 'agent', model: 't', version: '0' }, { title, body: 'gated work', workstream: 'rev-test', type: 'ops', workflow_attempt_id: 'attempt-1' }).id;
+  } finally { store.close?.(); }
+}
+
+function attemptState(e: Env): string {
+  const store = new Store(e.db);
+  try { return (store.db.prepare("SELECT state FROM workflow_attempts WHERE id = 'attempt-1'").get() as { state: string }).state; }
+  finally { store.close?.(); }
+}
+
 describe('pool workers on one seat (H-574)', { timeout: 60000 }, () => {
   it('two workers launched together each claim, are told, and finish a different ticket', async () => {
     // The sessions overlap on purpose: each waits until both have started, so
@@ -338,6 +360,80 @@ process.exit(r.status ?? 1);
     const entries = journal(e, 'w1');
     expect(entries.find((j) => j['launch_id'] === lost)).toMatchObject({ phase: 'quarantined' });
     expect(entries.filter((j) => j['launch_id'] !== lost)).toEqual([expect.objectContaining({ ticket_id: id, phase: 'complete' })]);
+  });
+
+  describe('a workflow-bound claim (H-687)', () => {
+    const run = (e: Env) => execFileSync('npx', ['tsx', REV_CLI, 'run', 'w1', '--count', '1'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+
+    it('keeps an unfinished claim unquarantined, and its next launch resumes and revalidates it by the launch its admission belongs to', () => {
+      const e = setup((h) => worker('w1', h, `${BOUND}; [ -f $REV_HOME/second ] || exit 1; ${FINISH}`) + worker('w2', h, 'true'));
+      const id = seedWorkflow(e, 'Gated work left unfinished');
+
+      run(e);
+      expect(ticket(e, id)).toMatchObject({ status: 'in_progress', assignee: 'builder' });
+      expect(attemptState(e)).toBe('running');
+      expect(events(e, 'w1')).not.toMatch(/launch-quarantined/);
+      expect(events(e, 'w1')).toMatch(new RegExp(`claim-kept\\s+${id} session ended failure`));
+
+      writeFileSync(join(e.home, 'second'), '');
+      run(e);
+      const log = events(e, 'w1');
+      expect(log).toMatch(new RegExp(`launch-claimed\\s+resumed ${id} admitted as `));
+      // Revalidation by this launch's own id would refuse: the admission is
+      // the first launch's.
+      expect(log).not.toMatch(/failed pre-dispatch revalidation|post-session revalidation failed/);
+      expect(ticket(e, id).status).toBe('done');
+      expect(journal(e, 'w1').map((j) => j['phase']).sort()).toEqual(['complete', 'quarantined']);
+    });
+
+    it('keeps a claim whose session never started, because its launch admission is spent', () => {
+      const e = setup((h) => worker('w1', h, `${BOUND}; exit 78`) + worker('w2', h, 'true'));
+      const id = seedWorkflow(e, 'Gated launch that never ran');
+
+      run(e);
+      expect(ticket(e, id)).toMatchObject({ status: 'in_progress', assignee: 'builder' });
+      expect(events(e, 'w1')).toMatch(new RegExp(`claim-kept\\s+${id} its session never started; workflow-bound`));
+      expect(events(e, 'w1')).not.toMatch(/claim-released/);
+      expect(attemptState(e)).toBe('running');
+    });
+
+    it('a held claim whose authority has gone goes to the human, and the worker draws its next ticket', () => {
+      const e = setup((h) => worker('w1', h, `${BOUND}; [ -f $REV_HOME/second ] || exit 1; ${FINISH}`) + worker('w2', h, 'true'));
+      const id = seedWorkflow(e, 'Gated work whose review is withdrawn');
+      run(e);
+      expect(ticket(e, id).status).toBe('in_progress');
+      const store = new Store(e.db, undefined, REVIEWER);
+      try { store.recordWorkflowDecision({ id: 'revoke-1', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'revocation', revokes_decision_id: 'pass-1', source: 'review:2' }); }
+      finally { store.close?.(); }
+      const next = seed(e, 'Ordinary work behind it');
+
+      writeFileSync(join(e.home, 'second'), '');
+      run(e);
+      expect(events(e, 'w1')).toMatch(new RegExp(`launch-claimed\\s+claimed ${next}`));
+      expect(ticket(e, next).status).toBe('done');
+      expect(helm(e, ['get', id])).toMatchObject({ status: 'open', needs_human: true });
+    });
+
+    it('a killed worker\'s workflow claim is not quarantined at restart, and the restart resumes it', async () => {
+      const e = setup((h) => worker('w1', h, `${BOUND}; touch $REV_HOME/model-started; [ -f $REV_HOME/release ] && ${FINISH}; until [ -f $REV_HOME/release ]; do sleep 0.1; done`) + worker('w2', h, 'true'));
+      const id = seedWorkflow(e, 'Gated work interrupted by a crash');
+
+      const child = runAsync(e, 'w1');
+      await waitFor(() => existsSync(join(e.home, 'model-started')));
+      const loopPid = Number(/loop-start\s+pid=(\d+)/.exec(events(e, 'w1'))![1]);
+      process.kill(loopPid, 'SIGKILL');
+      child.kill('SIGKILL');
+      await exited(child);
+      writeFileSync(join(e.home, 'release'), '');
+
+      const restarted = runAsync(e, 'w1');
+      try { await exited(restarted); } finally { restarted.kill('SIGKILL'); }
+      const log = events(e, 'w1');
+      expect(log).toMatch(new RegExp(`claim-kept\\s+${id} recovered dispatching`));
+      expect(attemptState(e)).not.toBe('quarantined');
+      expect(log).toMatch(new RegExp(`launch-claimed\\s+resumed ${id} admitted as `));
+      expect(ticket(e, id).status).toBe('done');
+    });
   });
 
   it('claims only inside its project lane', () => {

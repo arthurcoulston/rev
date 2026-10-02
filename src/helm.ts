@@ -139,6 +139,8 @@ export interface LaunchAdmission {
   ticketId: string | null;
   workflowAttemptId?: string;
   admissionId?: string;
+  /** The launch the admission was granted to: Helmo checks authority by this
+   *  pair. A resumed pool claim keeps its first launch's (H-687). */
   launchId?: string;
 }
 
@@ -277,6 +279,9 @@ export interface LaunchClaim {
   /** The worker already held this ticket from an earlier launch, and Helmo
    *  handed it forward to this one, retiring the earlier generation. */
   resumed?: boolean;
+  /** For a resumed workflow claim, the earlier launch its admission belongs
+   *  to, which Helmo names so this launch can revalidate it (H-687). */
+  admissionLaunchId?: string;
 }
 
 export function launchClaimArgs(l: LoopConfig, id: string): string[] {
@@ -290,7 +295,7 @@ export function launchClaim(g: GlobalConfig, l: LoopConfig, id: string): LaunchC
   try {
     const res = run(g, launchClaimArgs(l, id), loopActor(l, undefined, undefined, id), true) as {
       admitted?: boolean; claimed?: boolean; resumed?: boolean; ticket_id?: string; workflow_attempt_id?: string | null; admission_id?: string | null;
-      launch_id?: string; scope?: { session?: string; assignee?: string; workstream?: string; project?: string | null };
+      launch_id?: string; admission_launch_id?: string | null; scope?: { session?: string; assignee?: string; workstream?: string; project?: string | null };
     };
     if (res.admitted === false && res.claimed === undefined) return { act: 'idle', how: 'nothing_ready', reason: 'nothing ready to claim', ticketId: null };
     // The receipt must name THIS worker's exact scope: a replayed id answered
@@ -305,6 +310,9 @@ export function launchClaim(g: GlobalConfig, l: LoopConfig, id: string): LaunchC
       workflowAttemptId: res.workflow_attempt_id ?? undefined,
       admissionId: res.admission_id ?? undefined,
       resumed: res.resumed === true,
+      // A store from before H-687 does not name it; the loop then trusts the
+      // revalidation Helmo did at resume, as it did before.
+      admissionLaunchId: res.resumed === true && typeof res.admission_launch_id === 'string' ? res.admission_launch_id : undefined,
       reason: `${res.resumed === true ? 'resumed' : 'claimed'} ${res.ticket_id}${res.admission_id ? ` admitted as ${res.admission_id}` : ''}`,
     };
   } catch (e) {

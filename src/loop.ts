@@ -122,6 +122,9 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   // generation is still current, so what it finishes is valid work.
   // A claim asked but never answered is not settled here either (H-686): the
   // claim block asks Helmo again under that same launch id before any other.
+  // A kept claim's workflow admission is not quarantined either (H-687): the
+  // resume revalidates it, and a quarantine would refuse the very resume
+  // that keeps the work with this worker, leaving it held by nobody.
   const runningSessions = new Set<string>();
   const recoverLaunches = (only?: Set<string>): void => {
     for (const recovered of unsettledLaunches(l.name)) {
@@ -136,7 +139,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       }
       runningSessions.delete(recovered.launch_id);
       try {
-        if (recovered.admission_id) {
+        if (recovered.admission_id && !recovered.claim) {
           launchQuarantine(g, recovered.admission_id, recovered.launch_id, `Rev recovered an unsettled ${recovered.phase} launch after process restart.`);
         }
         if (recovered.claim) {
@@ -522,15 +525,17 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         }
         if (claim.how === 'claimed') {
           // A resumed workflow claim carries the admission its FIRST launch
-          // consumed, which Helmo revalidated at resume; its receipt belongs
-          // to that earlier launch id, so this launch journals the claim only.
-          const admissionId = claim.resumed ? undefined : claim.admissionId;
-          if (admissionId) recordLaunchAdmission(l.name, launchReceipt(g, admissionId, claimLaunchId));
+          // consumed; its receipt belongs to that earlier launch id, so this
+          // launch journals the claim only, and checks authority by the pair
+          // Helmo names (H-687). A store that names none revalidated at
+          // resume, and that is the check this launch relies on.
+          const admissionId = claim.resumed ? (claim.admissionLaunchId ? claim.admissionId : undefined) : claim.admissionId;
+          if (admissionId && !claim.resumed) recordLaunchAdmission(l.name, launchReceipt(g, admissionId, claimLaunchId));
           else recordLaunchClaim(l.name, claimLaunchId, claim.ticketId!);
           journaledLaunchId = claimLaunchId;
           claimedTicket = claim.ticketId;
           resumedClaim = claim.resumed === true;
-          admission = { ...admission, act: 'launch', how: 'admitted', reason: claim.reason, ticketId: claim.ticketId, admissionId, workflowAttemptId: claim.workflowAttemptId, launchId: claimLaunchId };
+          admission = { ...admission, act: 'launch', how: 'admitted', reason: claim.reason, ticketId: claim.ticketId, admissionId, workflowAttemptId: claim.workflowAttemptId, launchId: claim.admissionLaunchId ?? claimLaunchId };
           logEvent(l.name, 'launch-claimed', claim.reason);
         } else if (claim.how !== 'unavailable') {
           // Nothing was claimed, so there is nothing for a restart to resolve.
@@ -620,8 +625,15 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     // updates; evidence walked through the next one. The instruction is the fix,
     // not a narrower filter: the commit proving a build green is exactly the
     // evidence a ticket should carry when work HAS advanced.
+    // A workflow-bound claim is never put back (H-687): its attempt has spent
+    // its one launch admission, so an open ticket would be refused to every
+    // worker that drew it. It stays held, and the next launch resumes it.
     const putDown = (why: string) => {
       if (!claimedTicket || !journaledLaunchId) return;
+      if (admission.admissionId || admission.workflowAttemptId) {
+        logEvent(l.name, 'claim-kept', `${claimedTicket} ${why}; workflow-bound, so the next launch resumes it`);
+        return;
+      }
       try {
         if (releaseClaim(g, l, claimedTicket, journaledLaunchId, why)) logEvent(l.name, 'claim-released', `${claimedTicket} ${why}`);
       } catch (e) {
@@ -667,12 +679,15 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     const usageBefore = (run.billing ?? 'metered') === 'subscription'
       ? usageForModel(providerUsage()[run.runtime], model)
       : null;
-    if (journaledLaunchId && admission.admissionId) {
+    // Helmo checks authority by the launch the admission was granted to,
+    // which a resumed pool claim does not share with its journal entry.
+    const authorityLaunchId = admission.launchId ?? journaledLaunchId;
+    if (journaledLaunchId && authorityLaunchId && admission.admissionId) {
       try {
-        launchRevalidate(g, admission.admissionId, journaledLaunchId);
+        launchRevalidate(g, admission.admissionId, authorityLaunchId);
       } catch (e) {
         try {
-          launchQuarantine(g, admission.admissionId, journaledLaunchId, `Authority failed revalidation before dispatch: ${String(e).split('\n')[0]!.slice(0, 120)}`);
+          launchQuarantine(g, admission.admissionId, authorityLaunchId, `Authority failed revalidation before dispatch: ${String(e).split('\n')[0]!.slice(0, 120)}`);
           settleLaunch(l.name, journaledLaunchId, 'quarantined');
         } catch { /* retain the unsettled journal for restart recovery */ }
         putDown('its workflow authority failed revalidation before dispatch');
@@ -697,21 +712,27 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     const res = runSession(g, l, prompt, model, run, claimedTicket ? journaledLaunchId ?? undefined : undefined, journaledLaunchId ? launchGroupFile(l.name, journaledLaunchId) : undefined);
     let launchTrusted = true;
 
-    if (journaledLaunchId && admission.admissionId) {
+    // A session that ended short of ok on a pool claim is not quarantined
+    // (H-687): the claim is kept, and the worker's next launch resumes it
+    // from its record under a fenced generation. Quarantine would refuse
+    // that resume. Authority that fails revalidation is quarantined either
+    // way, and Helmo then returns the held ticket to the human.
+    if (journaledLaunchId && authorityLaunchId && admission.admissionId) {
       try {
-        launchRevalidate(g, admission.admissionId, journaledLaunchId);
+        launchRevalidate(g, admission.admissionId, authorityLaunchId);
         if (res.cls === 'ok') settleLaunch(l.name, journaledLaunchId, 'complete');
+        else if (claimedTicket) settleLaunch(l.name, journaledLaunchId, 'quarantined');
         else {
-          launchQuarantine(g, admission.admissionId, journaledLaunchId, `Model session ended ${res.cls} before a trusted advance boundary.`);
+          launchQuarantine(g, admission.admissionId, authorityLaunchId, `Model session ended ${res.cls} before a trusted advance boundary.`);
           settleLaunch(l.name, journaledLaunchId, 'quarantined');
           logEvent(l.name, 'launch-quarantined', `${journaledLaunchId} session ${res.cls}`);
         }
       } catch (e) {
         launchTrusted = false;
         try {
-          launchQuarantine(g, admission.admissionId, journaledLaunchId, `Authority failed revalidation after model output: ${String(e).split('\n')[0]!.slice(0, 120)}`);
+          launchQuarantine(g, admission.admissionId, authorityLaunchId, `Authority failed revalidation after model output: ${String(e).split('\n')[0]!.slice(0, 120)}`);
           settleLaunch(l.name, journaledLaunchId, 'quarantined');
-        } catch { /* recovery retries this exact affected launch */ }
+        } catch { /* recovery retries this exact launch; a kept claim is rechecked at resume */ }
         logEvent(l.name, 'launch-quarantined', `${journaledLaunchId} post-session revalidation failed`);
       }
     }

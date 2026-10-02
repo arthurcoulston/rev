@@ -143,8 +143,18 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   claim never worked goes back to `open` (seat reservation kept), released as
   the launch's own generation: a session that never started (`apparatus`), a
   failed pre-dispatch revalidation, a suppressed replay, or a journal write
-  that failed. A resumed workflow claim carries the admission its first launch
-  consumed (Helmo revalidates it at resume), so Rev journals it claim-only. A
+  that failed. **A workflow-bound claim** (H-687) is never released: its
+  attempt has spent its one launch admission, so an open ticket would be
+  refused to every worker that drew it; those paths log `claim-kept` instead.
+  Nor is a kept claim's admission quarantined — not at restart, not when its
+  session ends short of `ok` — because Helmo's resume revalidates it, and a
+  quarantine would refuse the very resume that keeps the work with this
+  worker. A resumed workflow claim carries the admission its first launch
+  consumed; Rev journals it claim-only and revalidates and quarantines by the
+  `admission_launch_id` Helmo names (a store that names none revalidated at
+  resume, and Rev relies on that). Authority that fails revalidation is still
+  quarantined, and Helmo's next resume then returns the ticket open with
+  `needs_human` and hands the worker its next ticket. A
   store without `launch-claim` denies every pool launch — without the atomic
   claim two workers race the same ticket. Nothing ready means `launch-idle`
   and no session. `project` is the worker's lane; it is refused on a loop
@@ -198,7 +208,7 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   the same affected-work-only rule and is asked again next pass.
   Workflow admissions are durably revalidated immediately before dispatch and
   again after the model returns. A restart quarantines any admitted or
-  dispatching journal entry it recovers: that boundary is ambiguous, so only
+  dispatching journal entry it recovers, except a pool claim's (above): that boundary is ambiguous, so only
   the affected attempt is withheld while ordinary work and sibling branches
   continue. Failed quarantine remains unsettled for the next restart rather
   than being mistaken for safe output.
