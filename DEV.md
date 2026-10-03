@@ -293,6 +293,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   controls are presumed deliberate and never auto-cleared. Only an expired or
   orphaned non-human PACE is released, and cleanup compares the observed
   by+at+pid tuple before unlinking so it cannot erase a replacement owner.
+  `pace` from the CLI records `pid=0` (`NO_OWNER_PID`): the command exits as
+  soon as it writes, so an agent's park is held by its one-hour `expires_at`
+  and never counted as orphaned (H-738; a CLI pid released it on the next poll).
 - `burn.ts` — reads the token-log back as a per-loop rolling window (hour and
   day) for the breaker. A file scan, not an in-memory total, because the two
   burns it exists for both spanned process restarts; the window is floored at

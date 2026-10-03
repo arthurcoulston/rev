@@ -9,7 +9,7 @@ import { join } from 'node:path';
 
 const home = mkdtempSync(join(tmpdir(), 'rev-sentinels-'));
 process.env.REV_HOME = home; // before the module reads it
-const { occupiedPid, paceAutoRelease, pidAlive, processObservation, runningStamp, sOwner, sReleaseOwned, sSet, sSetOwned, sValue } = await import('../src/sentinels.js');
+const { NO_OWNER_PID, occupiedPid, paceAutoRelease, pidAlive, processObservation, runningStamp, sOwner, sReleaseOwned, sSet, sSetOwned, sValue } = await import('../src/sentinels.js');
 
 function marker(loop: string, contents: string): void {
   mkdirSync(join(home, 'state', loop), { recursive: true });
@@ -128,5 +128,11 @@ describe('owned sentinels', () => {
     expect(paceAutoRelease({ ...base, expires_at: 'never' }, Date.now(), () => false)).toBe('pace-orphaned');
     expect(paceAutoRelease({ ...base, expires_at: 'never' }, Date.now(), () => true)).toBe(null);
     expect(paceAutoRelease({ ...base, at: 'not-a-timestamp', expires_at: 'not-a-timestamp' }, Date.now(), () => false)).toBe(null);
+  });
+
+  it('holds an unowned control by its expiry alone, never as orphaned (H-738)', () => {
+    const cli = { value: 'park', by: 'builder', at: '2026-09-29T15:00:00.000Z', pid: NO_OWNER_PID, reason: 'rev pace', expires_at: '2026-09-29T16:00:00.000Z' };
+    expect(paceAutoRelease(cli, Date.parse('2026-09-29T15:30:00.000Z'), () => false)).toBe(null);
+    expect(paceAutoRelease(cli, Date.parse('2026-09-29T16:00:00.000Z'), () => false)).toBe('pace-expired');
   });
 });

@@ -16,7 +16,7 @@ import { planLines, removalPlan, removeInstallation } from './remove.js';
 import { ReleaseError, describe as describeRelease, migrationLine, readSelection, rollback, selectionFile, upgrade } from './release.js';
 import { beginActivation, deploymentFile } from './deployment.js';
 import { readRedeploy, requestRedeploy, watchRedeploy } from './redeploy.js';
-import { logEvent, pidAlive, processObservation, sClear, sGet, sHas, sPendingPid, sSetOwned, sValue, streakReset } from './sentinels.js';
+import { logEvent, NO_OWNER_PID, pidAlive, processObservation, sClear, sGet, sHas, sPendingPid, sSetOwned, sValue, streakReset } from './sentinels.js';
 import { runFleet } from './supervisor.js';
 import { teamResume, teamStop } from './team-control.js';
 import { buildIntakeResult, recordIntakeResult } from './intake-preparation.js';
@@ -562,12 +562,14 @@ switch (cmd) {
     }
     console.log(targetLine(requireTarget(`set the pace of '${name}'`)));
     const actor = cliActor();
+    const expires = actor.human ? 'never' : new Date(Date.now() + 60 * 60 * 1000).toISOString();
     for (const n of names) {
       if (v === 'clear') sClear(n, 'PACE');
-      else sSetOwned(n, 'PACE', { value: v, by: actor.human ? 'human' : actor.label, at: new Date().toISOString(), pid: process.pid, reason: `${commandName} pace`, expires_at: actor.human ? 'never' : new Date(Date.now() + 60 * 60 * 1000).toISOString() });
+      else sSetOwned(n, 'PACE', { value: v, by: actor.human ? 'human' : actor.label, at: new Date().toISOString(), pid: NO_OWNER_PID, reason: `${commandName} pace`, expires_at: expires });
       logEvent(n, actor.label, `PACE=${v}`);
     }
-    console.log(`PACE ${v === 'clear' ? 'cleared' : `set to ${v}`} for ${listed(names)} (picked up within one poll).`);
+    const held = v === 'clear' || expires === 'never' ? '' : ` Held until ${expires}.`;
+    console.log(`PACE ${v === 'clear' ? 'cleared' : `set to ${v}`} for ${listed(names)} (picked up within one poll).${held}`);
     break;
   }
   case 'usage': {
