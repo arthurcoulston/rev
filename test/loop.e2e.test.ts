@@ -1659,6 +1659,31 @@ mock_cmd = "exit 1"
     expect(escalations.length).toBe(1);
   });
 
+  it('an agent park set by the CLI still holds after the CLI has exited (H-738)', async () => {
+    const e = setup(`[loops.park-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+`);
+    seedTicket(e, 'Ready work the park must hold back');
+    // The exact H-738 shape: an agent parks the lane and the command exits.
+    const out = execFileSync('node', ['--import', 'tsx', REV_CLI, 'pace', 'park-loop', 'park'], { env: { ...e.env, REV_ACTOR: '{"name":"builder","kind":"agent"}' }, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+    expect(out).toMatch(/PACE set to park .* Held until \d{4}-/);
+    const dir = join(e.home, 'state', 'park-loop');
+    const events = () => readFileSync(join(dir, 'events.log'), 'utf8');
+    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'park-loop'], { env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore' });
+    try {
+      await waitForFile(join(dir, 'PARKED'));
+      await new Promise((r) => setTimeout(r, 1000)); // ten polls at 0.1s
+      expect(existsSync(join(dir, 'PARKED'))).toBe(true);
+      expect(readFileSync(join(dir, 'PACE'), 'utf8')).toMatch(/^park\nby=builder\n/);
+      expect(events()).not.toMatch(/pace-orphaned|run-start/);
+    } finally {
+      await stop(child);
+    }
+  });
+
   it('STOP halts before any iteration; apparatus fault fails closed', () => {
     const e = setup(`[loops.app-loop]
 workstream = "rev-test"

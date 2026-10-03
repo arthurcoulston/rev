@@ -64,10 +64,17 @@ export function sValue(loop: string, s: Sentinel): string | null {
   return content === null ? null : (content.split('\n')[0] ?? '');
 }
 
+// A control set by a command that exits as soon as it has written it (the
+// `pace` CLI) has no process whose death means anything: it is held by its
+// expires_at alone. Recording the CLI's own pid released every agent park on
+// the loop's next poll (H-738).
+export const NO_OWNER_PID = 0;
+
 export function sSetOwned(loop: string, s: Sentinel, owner: SentinelOwner): void {
   const reason = owner.reason.replace(/[\r\n]+/g, ' ').trim();
   const pending = s === 'PACE' ? sPath(loop, 'PACE.pending') : null;
-  if (pending) writeFileSync(pending, `${owner.pid}\n`);
+  // The pending marker names the writer, which is this process whoever owns the control.
+  if (pending) writeFileSync(pending, `${process.pid}\n`);
   try {
     sSet(loop, s, `${owner.value}\nby=${owner.by}\nat=${owner.at}\npid=${owner.pid}\nreason=${reason}\nexpires_at=${owner.expires_at}\n`);
   } finally {
@@ -82,6 +89,7 @@ export function sPendingPid(loop: string): number | null {
 export function paceAutoRelease(owner: SentinelOwner | null, now = Date.now(), alive = writerAlive): 'pace-expired' | 'pace-orphaned' | null {
   if (!owner || owner.by === 'human' || !validOwnerTime(owner.at) || !validOwnerTime(owner.expires_at, true)) return null;
   if (owner.expires_at !== 'never' && Date.parse(owner.expires_at) <= now) return 'pace-expired';
+  if (owner.pid === NO_OWNER_PID) return null;
   return alive(owner.pid) ? null : 'pace-orphaned';
 }
 
